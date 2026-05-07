@@ -1,5 +1,6 @@
 import zipfile
 import re
+import os
 import pandas as pd
 
 def read_orbis_excel(filepath, sheet_name="Ergebnisse", **kwargs):
@@ -7,27 +8,36 @@ def read_orbis_excel(filepath, sheet_name="Ergebnisse", **kwargs):
     Fixes the applyNumFmt CellStyle error from Orbis/BvD exports
     by patching the styles.xml inside the xlsx file before reading.
     """
-    fixed_path = filepath.replace(".xlsx", "_fixed.xlsx")
 
-    # Read all files from original xlsx
-    with zipfile.ZipFile(filepath, "r") as zin:
-        files = {}
-        for name in zin.namelist():
-            files[name] = zin.read(name)
+    #only fix original files
+    if filepath.endswith('_fixed.xlsx'):
+        fixed_path = filepath
+    
+    else: 
+        fixed_path = filepath.replace(".xlsx", "_fixed.xlsx")
 
-    # Patch styles.xml - remove problematic apply* attributes
-    styles = files["xl/styles.xml"].decode("utf-8")
-    styles_fixed = re.sub(
-        r'\s+apply(NumFmt|Font|Fill|Border|Alignment|Protection)=\"[^\"]*\"',
-        "",
-        styles
-    )
-    files["xl/styles.xml"] = styles_fixed.encode("utf-8")
+        # Read all files from original xlsx
+        with zipfile.ZipFile(filepath, "r") as zin:
+            files = {}
+            for name in zin.namelist():
+                files[name] = zin.read(name)
 
-    # Write fixed xlsx
-    with zipfile.ZipFile(fixed_path, "w", zipfile.ZIP_DEFLATED) as zout:
-        for name, data in files.items():
-            zout.writestr(name, data)
+        # Patch styles.xml - remove problematic apply* attributes
+        styles = files["xl/styles.xml"].decode("utf-8")
+        styles_fixed = re.sub(
+            r'\s+apply(NumFmt|Font|Fill|Border|Alignment|Protection)=\"[^\"]*\"',
+            "",
+            styles
+        )
+        files["xl/styles.xml"] = styles_fixed.encode("utf-8")
+
+        # Write fixed xlsx
+        with zipfile.ZipFile(fixed_path, "w", zipfile.ZIP_DEFLATED) as zout:
+            for name, data in files.items():
+                zout.writestr(name, data)
+
+        #delete old file 
+        os.remove(filepath)
 
     # Read and return dataframe
     df = pd.read_excel(fixed_path, sheet_name=sheet_name, **kwargs)
