@@ -145,7 +145,7 @@ class MisallocationAnalysis():
 
         ax1.plot(plotdf["year"], plotdf["w_disp_MRPK"], label="MRPK", color="#1f77b4", linewidth=2)
         ax1.plot(plotdf["year"], plotdf["w_disp_MRPL"], label="MRPL", color="#d62728", linewidth=2)
-        ax1.set_title(f"Dispersion of MRPK and MRPL. {plotdf['year'][0]} = 1")
+        ax1.set_title(f"{self.country} - Dispersion of MRPK and MRPL. {plotdf['year'][0]} = 1")
         ax1.set_xlabel("Year")
         ax1.set_ylabel("Standard Deviation")
         ax1.legend()
@@ -236,10 +236,12 @@ class MisallocationAnalysis():
         ax1.plot(plotdf["year"], plotdf["realinterestrate"], label="Real Interest Rate", color="#ff7f0e", linewidth=2, linestyle="--")
         ax1.plot(plotdf["year"], plotdf["log_tfp"], label="TFP", color="green", linewidth=2, linestyle=":")
 
+        ax1.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10))
+
         ax1.set_xlabel("Year")
         ax1.set_ylabel("Normalized (base year = 1)")
         ax1.legend(loc="lower left")
-        ax1.set_title(f"MRPK Dispersion vs. Real Interest Rate vs. TFP {plotdf['year'].iloc[0]} = 1")
+        ax1.set_title(f"{self.country} - MRPK Dispersion vs. Real Interest Rate vs. TFP {plotdf['year'].iloc[0]} = 1")
 
         plt.tight_layout()
         plt.show()
