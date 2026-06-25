@@ -86,16 +86,11 @@ def get_real_interest_rate(country:str):
 
 def capital_prices(country: str):
     #capital prices eurostat
-    file = "Data/Capital Prices Eurostat 2015.xlsx"
+    file = "/Users/curdinlieberherr/Library/Mobile Documents/com~apple~CloudDocs/Uni/26 FS/Thesis/Data Work/Data/EU Capital Prices Eurostat 2021 = 100.xlsx"
     capi = pd.read_excel(file, sheet_name='Sheet 1', header=10)
-
-    NUMCOLS = [str(year) for year in range(2016, 2026)]
-    capi.columns = ['country'] + [
-        col for year in NUMCOLS for col in (year, f'{year}_flag')
-    ][:-1]
-
-    #drop flag columns
-    capi = capi[ [col for col in capi.columns if '_flag' not in col] ]
+    capi['country'] = capi.iloc[:,0]
+    NUMCOLS = [str(year) for year in range(1992, 2026)]
+    capi = capi[['country'] + NUMCOLS]
 
     #set to numeric
     for col in NUMCOLS:
@@ -107,47 +102,31 @@ def capital_prices(country: str):
 
     capi = capi[capi['country'] == country]
 
-    return capi
+    return capi.sort_values('year', ascending = True).reset_index(drop=True)
 
 
 def price_indexes(country: str):
     #read data and set header names
-    file = "Data/Prices Eurostat 2015.xlsx"
-    ps = pd.read_excel(file, sheet_name='Sheet 1', header=10)
-
-    #clean colnames
-    NUMCOLS = [str(year) for year in range(2016, 2026)]
-    ps.columns = ['country', 'sector', 'sectorname'] + [
-        col for year in NUMCOLS for col in (year, f'{year}_flag')
-    ]
-
-    #drop flag columns
-    ps = ps[ [col for col in ps.columns if '_flag' not in col] ]
-
-    #set to numeric
+    file = '/Users/curdinlieberherr/Library/Mobile Documents/com~apple~CloudDocs/Uni/26 FS/Thesis/Data Work/Data/EU Producer Prices Country Sector 1992 - 2025 2021=100.xlsx'
+    df = pd.read_excel(file, sheet_name='Sheet 1', header=9)
+    df = df.iloc[2:, :]
+    df['country'] = df.iloc[:,0]
+    df['sector2d'] = df.iloc[:,1].str[1:]
+    NUMCOLS = [str(year) for year in range(1992, 2026)]
+    df = df[['country', 'sector2d'] + NUMCOLS]
     for col in NUMCOLS:
-        ps[col] = pd.to_numeric(ps[col], errors='coerce')
-
-    #only keep disaggregated sectorcodes for 2 digit sector
-    ps = ps[ps['sector'].str.fullmatch(r'[A-Z]\d+', na=False)]
-    ps = ps[ps['sector'].str.strip().str.len() == 3]
-    ps['sector2d'] = ps['sector'].str[1:]
-
+        df[col] = pd.to_numeric(df[col], errors='coerce')
 
     #only keep spain 
-    ps = ps[ps['country'] == country]
-
-    #set 2015 as base year
-    ps['2015'] = 100
-    NUMCOLS = ['2015'] + NUMCOLS
+    df = df[df['country'] == country]
 
     #convert to long format
-    ps = ps.melt('sector2d', value_vars=NUMCOLS, value_name='priceind', var_name='year')
+    df = df.melt('sector2d', value_vars=NUMCOLS, value_name='priceind', var_name='year')
 
     #divide index by 100 to get decimal
-    ps['priceind'] = ps['priceind'] / 100
+    df['priceind'] = df['priceind'] / 100
 
-    return ps
+    return df.sort_values('year', ascending = True).reset_index(drop=True)
 
 def get_country_name(iso_code):
     country = pycountry.countries.get(alpha_2=iso_code.upper())
@@ -274,37 +253,30 @@ def melt_orbis_df(df, id_cols):
     return df_long
 
 
-def get_eurostats_turnover(country = 'Spain'):
-    to = pd.read_excel("Data/EU Manufacturing Turnover 2011-2020.xlsx", sheet_name='Sheet 1', header=8)
+def get_eurostats_turnover(country: str = None):
+    to1 = pd.read_excel("Data/EU Manufacturing Turnover 1992-2002.xlsx", sheet_name='Sheet 1', header=8)
+    to2 = pd.read_excel("Data/EU Manufacturing Turnover 2003 - 2004.xlsx", sheet_name='Sheet 1', header=8)
+    to3 = pd.read_excel("Data/EU Manufacturing Turnover 2005-2020.xlsx", sheet_name='Sheet 1', header=8)
+    to4= pd.read_excel("Data/EU Net Turnover 2021-2024.xlsx", sheet_name='Sheet 1', header=9)
 
-    #clean column and names
-    NUMCOLS = [str(year) for year in range(2011, 2021)]
-    to.columns = ['country'] + [
-        col for year in NUMCOLS for col in (year, f'{year}_flag')
-    ]
-    to = to[[col for col in to.columns if '_flag' not in col] ]
+    data = pd.DataFrame(columns=['country'])
+    numcols = []
 
-    #melt frame
-    to = to.melt('country', value_vars=NUMCOLS, value_name='turnover', var_name='year')
+    for df, yrange in [(to1, range(1992,2003)), (to2, range(2003,2005)), (to3, range(2005,2021)), (to4, range(2021,2025))]:
+        cols = [str(year) for year in yrange]
+        numcols = numcols + cols
+        df['country'] = df.iloc[:,0]
+        df = df[['country'] + cols]
 
-    #again for present data from 2021 on
-    to1= pd.read_excel("Data/EU Net Turnover 2021-2024.xlsx", sheet_name='Sheet 1', header=9)
-    #clean column and names
-    NUMCOLS = [str(year) for year in range(2021, 2025)]
-    to1.columns = ['country'] + [
-        col for year in NUMCOLS for col in (year, f'{year}_flag')
-    ]
-    to1 = to1[[col for col in to1.columns if '_flag' not in col] ]
+        data = data.merge(df, on='country', how='outer')
 
     #melt frame
-    to1 = to1.melt('country', value_vars=NUMCOLS, value_name='turnover', var_name='year')
+    data = data.melt('country', value_vars=numcols, value_name='turnover', var_name='year')
 
-    to = pd.concat([to,to1])
+    if country:
+        data = data[data['country'] == country]
 
-    #keep spain
-    to = to[to['country'] == country]
-
-    return to
+    return data.sort_values('year', ascending = True).reset_index(drop=True)
 
 
 import duckdb

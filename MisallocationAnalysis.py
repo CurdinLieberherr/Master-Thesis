@@ -239,9 +239,9 @@ class MisallocationAnalysis():
         ax1.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10))
 
         ax1.set_xlabel("Year")
-        ax1.set_ylabel("Normalized (base year = 1)")
+        ax1.set_ylabel(f"Normalized ({plotdf['year'].iloc[0]} = 0)")
         ax1.legend(loc="lower left")
-        ax1.set_title(f"{self.country} - MRPK Dispersion vs. Real Interest Rate vs. TFP {plotdf['year'].iloc[0]} = 1")
+        ax1.set_title(f"{self.country} - MRPK Dispersion vs. Real Interest Rate vs. TFP.")
 
         plt.tight_layout()
         plt.show()
