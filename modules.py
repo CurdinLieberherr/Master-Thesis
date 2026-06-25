@@ -4,6 +4,154 @@ import os
 from pathlib import Path
 import pandas as pd
 import numpy as np
+import pycountry
+import matplotlib.pyplot as plt
+
+
+    
+class RealRate():
+    def __init__(self, country: str):
+        self.country = country
+        self.df = get_real_interest_rate(country)
+    
+    def plot(self):
+        plt.figure(figsize=(10, 5))
+        plt.plot(self.df['year'], self.df['realinterestrate'], marker='o', linestyle='-', label = 'real interest rate')
+        plt.plot(self.df['year'], self.df['inflation'], linestyle='--', color='black', label='inflation')
+        plt.plot(self.df['year'], self.df['nominalinterestrate'], linestyle=':', color='red', label='nominal interest rate')
+
+
+        plt.xlabel("Year")
+        plt.ylabel("Real Interest Rate")
+        plt.title(f"{self.country} Real Interest Rate")
+        plt.axhline(0, color='black', linewidth=0.8, linestyle='--')
+        plt.grid(True, linestyle='--', alpha=0.5)
+        plt.xticks(rotation=90)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig('plots/realinterestrate.png', dpi=300)
+
+        plt.show()
+
+
+
+def get_real_interest_rate(country:str):
+    #capital prices eurostat
+    file = "Data/Nominal Interest Rate Eurostats.xlsx"
+    noi = pd.read_excel(file, sheet_name='Sheet 1', header=10)
+
+    NUMCOLS = [str(year) for year in range(1949, 2026)]
+    noi.columns = ['country'] + [
+        col for year in NUMCOLS for col in (year, f'{year}_flag')
+    ][:-1]
+
+    #drop flag columns
+    noi = noi[ [col for col in noi.columns if '_flag' not in col] ]
+
+    #set to numeric
+    for col in NUMCOLS:
+        noi[col] = pd.to_numeric(noi[col], errors='coerce')
+
+
+    noi = noi.melt('country', value_vars=NUMCOLS, value_name='nominalinterestrate', var_name='year')
+    noi['nominalinterestrate'] = noi['nominalinterestrate'] / 100
+
+    noi = noi[noi['country'] == country]
+
+    #inflation
+    file = "Data/Inflation Eurostats.xlsx"
+    inf = pd.read_excel(file, sheet_name='Sheet 1', header=10)
+
+    NUMCOLS = [str(year) for year in range(1996, 2026)]
+    inf.columns = ['country'] + [
+        col for year in NUMCOLS for col in (year, f'{year}_flag')
+    ][:-1]
+    #drop flag columns
+    inf = inf[ [col for col in inf.columns if '_flag' not in col] ]
+    #set to numeric
+    for col in NUMCOLS:
+        inf[col] = pd.to_numeric(inf[col], errors='coerce')
+    inf = inf.melt('country', value_vars=NUMCOLS, value_name='inflation', var_name='year')
+    inf['inflation'] = inf['inflation'] / 100
+    inf = inf[inf['country'] == country]
+
+
+    rirate = noi.merge(inf, on=['country', 'year'], how='inner')
+    rirate['realinterestrate'] = rirate['nominalinterestrate'] - rirate['inflation']
+
+    rirate['year'] = rirate['year'].astype(int)
+
+    return rirate
+
+
+def capital_prices(country: str):
+    #capital prices eurostat
+    file = "Data/Capital Prices Eurostat 2015.xlsx"
+    capi = pd.read_excel(file, sheet_name='Sheet 1', header=10)
+
+    NUMCOLS = [str(year) for year in range(2016, 2026)]
+    capi.columns = ['country'] + [
+        col for year in NUMCOLS for col in (year, f'{year}_flag')
+    ][:-1]
+
+    #drop flag columns
+    capi = capi[ [col for col in capi.columns if '_flag' not in col] ]
+
+    #set to numeric
+    for col in NUMCOLS:
+        capi[col] = pd.to_numeric(capi[col], errors='coerce')
+    capi['2015'] = 100
+
+    capi = capi.melt('country', value_vars=['2015']+NUMCOLS, value_name='capitalprice', var_name='year')
+    capi['capitalprice'] = capi['capitalprice'] / 100
+
+    capi = capi[capi['country'] == country]
+
+    return capi
+
+
+def price_indexes(country: str):
+    #read data and set header names
+    file = "Data/Prices Eurostat 2015.xlsx"
+    ps = pd.read_excel(file, sheet_name='Sheet 1', header=10)
+
+    #clean colnames
+    NUMCOLS = [str(year) for year in range(2016, 2026)]
+    ps.columns = ['country', 'sector', 'sectorname'] + [
+        col for year in NUMCOLS for col in (year, f'{year}_flag')
+    ]
+
+    #drop flag columns
+    ps = ps[ [col for col in ps.columns if '_flag' not in col] ]
+
+    #set to numeric
+    for col in NUMCOLS:
+        ps[col] = pd.to_numeric(ps[col], errors='coerce')
+
+    #only keep disaggregated sectorcodes for 2 digit sector
+    ps = ps[ps['sector'].str.fullmatch(r'[A-Z]\d+', na=False)]
+    ps = ps[ps['sector'].str.strip().str.len() == 3]
+    ps['sector2d'] = ps['sector'].str[1:]
+
+
+    #only keep spain 
+    ps = ps[ps['country'] == country]
+
+    #set 2015 as base year
+    ps['2015'] = 100
+    NUMCOLS = ['2015'] + NUMCOLS
+
+    #convert to long format
+    ps = ps.melt('sector2d', value_vars=NUMCOLS, value_name='priceind', var_name='year')
+
+    #divide index by 100 to get decimal
+    ps['priceind'] = ps['priceind'] / 100
+
+    return ps
+
+def get_country_name(iso_code):
+    country = pycountry.countries.get(alpha_2=iso_code.upper())
+    return country.name if country else None
 
 
 def prepare_orbis_excel(folder):
@@ -126,7 +274,7 @@ def melt_orbis_df(df, id_cols):
     return df_long
 
 
-def get_eurostats_turnover():
+def get_eurostats_turnover(country = 'Spain'):
     to = pd.read_excel("Data/EU Manufacturing Turnover 2011-2020.xlsx", sheet_name='Sheet 1', header=8)
 
     #clean column and names
@@ -154,7 +302,7 @@ def get_eurostats_turnover():
     to = pd.concat([to,to1])
 
     #keep spain
-    to = to[to['country'] == 'Spain']
+    to = to[to['country'] == country]
 
     return to
 
