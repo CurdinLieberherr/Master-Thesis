@@ -1,8 +1,9 @@
 from modules import *
 class MisallocationAnalysis():
-    def __init__(self, country_iso: str):
-        self.country = get_country_name(country_iso)
-        self.fin = read_parquet(country_iso)
+    def __init__(self, country: str, start:int = 2015, end:int=2024):
+        self.country = country
+        country_iso = get_country_iso(country)
+        self.fin = read_parquet(country_iso, start=start, end=end)
         self.euto = get_eurostats_turnover(self.country)
         self.prices = price_indexes(self.country)
         self.capi = capital_prices(self.country)
@@ -192,7 +193,7 @@ class MisallocationAnalysis():
         
 
     def plot_productivity(self):
-        plotdf = self.tfp_df.copy()
+        plotdf = self.tfpdf.copy()
         plotdf = plotdf / plotdf.iloc[0] - 1
         plotdf = plotdf.reset_index()
 

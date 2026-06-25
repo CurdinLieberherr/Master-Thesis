@@ -128,9 +128,9 @@ def price_indexes(country: str):
 
     return df.sort_values('year', ascending = True).reset_index(drop=True)
 
-def get_country_name(iso_code):
-    country = pycountry.countries.get(alpha_2=iso_code.upper())
-    return country.name if country else None
+def get_country_iso(name):
+    country = pycountry.countries.search_fuzzy(name)[0]
+    return country.alpha_2
 
 
 def prepare_orbis_excel(folder):
@@ -273,6 +273,8 @@ def get_eurostats_turnover(country: str = None):
     #melt frame
     data = data.melt('country', value_vars=numcols, value_name='turnover', var_name='year')
 
+    data['turnover'] = pd.to_numeric(data['turnover'], errors='coerce')
+
     if country:
         data = data[data['country'] == country]
 
@@ -282,7 +284,7 @@ def get_eurostats_turnover(country: str = None):
 import duckdb
 import pandas as pd
 
-def read_parquet(country_iso: str) -> pd.DataFrame:
+def read_parquet(country_iso: str, start:int, end:int) -> pd.DataFrame:
     #financials = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/industry_global_financials_and_ratios_eur"
     financials = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/financials_history_quarterly_industry_global_financials_and_ratios_eur"
     addresses = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/all_addresses"
@@ -320,7 +322,7 @@ def read_parquet(country_iso: str) -> pd.DataFrame:
             ) AS rn
         FROM read_parquet('{financials}/*.parquet') AS fin
         JOIN filtered_ids ids USING (bvd_id_number)
-        WHERE YEAR(closing_date) >= 2015 AND MONTH(closing_date) = 12 AND DAY(closing_date) = 31
+        WHERE YEAR(closing_date) >= {start} and YEAR(closing_date) <= {end} AND MONTH(closing_date) = 12 AND DAY(closing_date) = 31
     )
     SELECT * EXCLUDE (rn)
     FROM fin_filtered
