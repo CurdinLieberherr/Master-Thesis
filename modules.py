@@ -253,27 +253,33 @@ def melt_orbis_df(df, id_cols):
     return df_long
 
 
-def get_eurostats_turnover(country: str = None):
-    to1 = pd.read_excel("Data/EU Manufacturing Turnover 1992-2002.xlsx", sheet_name='Sheet 1', header=8)
-    to2 = pd.read_excel("Data/EU Manufacturing Turnover 2003 - 2004.xlsx", sheet_name='Sheet 1', header=8)
-    to3 = pd.read_excel("Data/EU Manufacturing Turnover 2005-2020.xlsx", sheet_name='Sheet 1', header=8)
-    to4= pd.read_excel("Data/EU Net Turnover 2021-2024.xlsx", sheet_name='Sheet 1', header=9)
+def get_eurostats_data(country: str = None):
 
-    data = pd.DataFrame(columns=['country'])
-    numcols = []
+    files = [("Data/Eurostat Comparison 1992 - 2002.xlsx", (1992,2002), 8,
+                {'Sheet 1': 'nfirms', 'Sheet 2': 'turnover', 'Sheet 3': 'valueadded', 'Sheet 5': 'wages', 'Sheet 6': 'nemployees'}),
+            ("Data/Eurostats Comparison 2002-2004.xlsx", (2002,2004+1),8,
+                {'Sheet 1': 'nfirms', 'Sheet 2': 'turnover', 'Sheet 4': 'valueadded', 'Sheet 5': 'wages', 'Sheet 6': 'nemployees'}),
+            ("Data/Eurostat Comparison 2005-2020.xlsx", (2005,2020+1),8,
+                {'Sheet 1': 'nfirms', 'Sheet 2': 'turnover', 'Sheet 3': 'valueadded', 'Sheet 5': 'wages', 'Sheet 6': 'nemployees'}),
+            ("Data/Eurostat Comparison 2021-2024.xlsx", (2021,2024+1),9,
+                {'Sheet 1': 'nfirms', 'Sheet 2': 'nemployees', 'Sheet 3': 'valueadded', 'Sheet 4': 'wages', 'Sheet 5': 'turnover'})]
 
-    for df, yrange in [(to1, range(1992,2003)), (to2, range(2003,2005)), (to3, range(2005,2021)), (to4, range(2021,2025))]:
-        cols = [str(year) for year in yrange]
-        numcols = numcols + cols
-        df['country'] = df.iloc[:,0]
-        df = df[['country'] + cols]
+    data = pd.DataFrame()
 
-        data = data.merge(df, on='country', how='outer')
+    for file, yrange, header, mapdict in files:
+        btdf = pd.DataFrame(columns = ['country', 'year'])
+        for sheet, var in mapdict.items():
+            df = pd.read_excel(file, sheet_name = sheet, header=header)
+            cols = [str(year) for year in range(*yrange)]
+            df['country'] = df.iloc[:,0]
+            df = df[['country'] + cols]
+            df = df.melt('country', value_vars=cols, value_name=var, var_name='year')
+            unit = (1 if var in ['nfirms', 'nemployees'] else 1e6)
+            df[var] = pd.to_numeric(df[var], errors = 'coerce') * unit
 
-    #melt frame
-    data = data.melt('country', value_vars=numcols, value_name='turnover', var_name='year')
-
-    data['turnover'] = pd.to_numeric(data['turnover'], errors='coerce')
+            btdf = btdf.merge(df, on=['country', 'year'], how = 'outer')
+        
+        data = pd.concat([data, btdf])
 
     if country:
         data = data[data['country'] == country]
@@ -344,9 +350,5 @@ def read_parquet(country_iso: str, start:int, end:int) -> pd.DataFrame:
     }
 
     df = df.rename(columns=namedict)
-
-    #turn values in to tsd
-    for col in ['assets', 'revenue', 'materials', 'wagebill']:
-        df[col] = df[col] / 1000
 
     return df[['FirmName', 'assets', 'revenue', 'wagebill', 'nEmployees', 'materials', 'sector', 'year']]

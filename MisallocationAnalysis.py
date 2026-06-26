@@ -4,7 +4,7 @@ class MisallocationAnalysis():
         self.country = country
         country_iso = get_country_iso(country)
         self.fin = read_parquet(country_iso, start=start, end=end)
-        self.euto = get_eurostats_turnover(self.country)
+        self.eurostats = get_eurostats_data(self.country)
         self.prices = price_indexes(self.country)
         self.capi = capital_prices(self.country)
         self.realrate = RealRate(self.country)
@@ -76,25 +76,21 @@ class MisallocationAnalysis():
 
     def compare_df_eurostats(self) -> pd.DataFrame:
         #get infos of companies per year
-        counts = self.df.groupby('year').agg({'FirmName': 'count', 'revenue': 'sum'}).reset_index()
+        counts = self.df.groupby('year').agg({
+            'FirmName': 'count', 'revenue': 'sum', 'wagebill': 'sum', 'materials': 'sum', 'nEmployees': 'sum'}).reset_index()
         counts['year'] = counts['year'].astype(str)
 
         #merge with eurostats turnover and compare
-        counts = counts.merge(self.euto, how='left', on='year')
-        #set revenue to mios
-        counts['revenue'] = counts['revenue'] / 1000
-        #create coverage ratio
-        counts['ratio'] = (counts['revenue'] / counts['turnover'])
+        counts = counts.merge(self.eurostats, how='left', on='year')
 
-        rename = {
-            'year': 'Year',
-            'revenue' : 'Revenue Orbis',
-            'turnover': 'Turnover Eurostats',
-            'ratio': 'Share Orbis'
-        }
-        counts = counts.rename(columns=rename)[rename.values()]
+        counts['Turnover'] = (counts['revenue'] / counts['turnover'])
+        counts['Wages'] = (counts['wagebill'] / counts['wages'])
+        counts['Value Added'] = (counts['revenue'] - counts['materials']) / counts['valueadded']
+        counts['Firms'] = counts['FirmName'] / counts['nfirms']
+        counts['Employees'] = counts['nEmployees'] / counts['nemployees']
+        counts['Year'] = counts['year']
 
-        return counts[['Year', 'Share Orbis']]
+        return counts[['Year', 'Turnover','Wages', 'Value Added', 'Firms', 'Employees']].round(2)
     
     def _calculate_dispersion(self):
         alpha = 0.35
@@ -136,13 +132,13 @@ class MisallocationAnalysis():
         
         return dispt
     
-    def plot_dispersion(self):
+    def plot_dispersion(self, figsize = (8,6)):
         plotdf = self.dispt.copy()
         plotdf = plotdf / plotdf.iloc[0]
         plotdf = plotdf.reset_index()
 
         #create plot 
-        fig, ax1 = plt.subplots(figsize=(8,6))
+        fig, ax1 = plt.subplots(figsize=figsize)
 
         ax1.plot(plotdf["year"], plotdf["w_disp_MRPK"], label="MRPK", color="#1f77b4", linewidth=2)
         ax1.plot(plotdf["year"], plotdf["w_disp_MRPL"], label="MRPL", color="#d62728", linewidth=2)
@@ -192,13 +188,13 @@ class MisallocationAnalysis():
         return tfp_df
         
 
-    def plot_productivity(self):
+    def plot_productivity(self, figsize = (8,6)):
         plotdf = self.tfpdf.copy()
         plotdf = plotdf / plotdf.iloc[0] - 1
         plotdf = plotdf.reset_index()
 
         #create plot 
-        fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(8,6))
+        fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=figsize)
 
         ax1.plot(plotdf["year"], plotdf["log_tfp"], label="TFP", color="#1f77b4", linewidth=2)
         ax1.plot(plotdf["year"], plotdf["log_tfpe"], label="TFPe", color="#d62728", linewidth=2)
@@ -218,7 +214,7 @@ class MisallocationAnalysis():
 
         return fig
 
-    def plot_mrpk_tfp_realrate(self):
+    def plot_mrpk_tfp_realrate(self, figsize = (8,6)):
         #get dispersion dataframe
         plotdf = self.dispt.copy()
         plotdf = plotdf.merge(self.tfpdf, left_index=True, right_index=True)
@@ -231,7 +227,7 @@ class MisallocationAnalysis():
         plotdf['realinterestrate'] = plotdf['realinterestrate'] - plotdf.loc[0,'realinterestrate']
 
 
-        fig, ax1 = plt.subplots(figsize=(8, 6))
+        fig, ax1 = plt.subplots(figsize=figsize)
 
         ax1.plot(plotdf["year"], plotdf["w_disp_MRPK"], label="MRPK Dispersion", color="#1f77b4", linewidth=2)
         ax1.plot(plotdf["year"], plotdf["realinterestrate"], label="Real Interest Rate", color="#ff7f0e", linewidth=2, linestyle="--")
@@ -243,6 +239,40 @@ class MisallocationAnalysis():
         ax1.set_ylabel(f"Normalized ({plotdf['year'].iloc[0]} = 0)")
         ax1.legend(loc="lower left")
         ax1.set_title(f"{self.country} - MRPK Dispersion vs. Real Interest Rate vs. TFP.")
+
+        plt.tight_layout()
+        plt.show()
+
+        return fig
+    
+    def plot_capital_tfp_moments(self, figsize = (10,6)):
+        cap = self.df.copy()
+
+        cap['k'] = np.log(cap['k'])
+        cap['Z'] = np.log(cap['Z'])
+
+        capgrp = cap.groupby(['sector', 'year']).agg(
+            stdk = ('k', 'std'),
+            stdZ = ('Z', 'std')).reset_index()
+
+        capcorr = cap.groupby(['sector', 'year']).apply(lambda g: g['k'].corr(g['Z'])).to_frame('correlation').reset_index()
+
+        cap = capgrp.merge(capcorr, on=['sector', 'year'], how='inner')
+
+        cap = cap.merge(self.sector_weights, on='sector', how='left')
+        cap['wstdk'] = cap['stdk'] * cap['sectorweight']
+        cap['wstdZ'] = cap['stdZ'] * cap['sectorweight']
+        cap['wcorr'] = cap['correlation'] * cap['sectorweight']
+
+        cap = cap.groupby('year').agg(corr = ('wcorr', 'sum'),
+                                stdK = ('wstdk', 'sum'))
+
+        fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=figsize)
+
+        ax1.plot(cap.index, cap['stdK'])
+        ax1.set_ylabel('Standard Deviation of log(k)')
+        ax2.plot(cap.index, cap['corr'])
+        ax2.set_ylabel('Correlation of log(k) with log(Z)')
 
         plt.tight_layout()
         plt.show()
