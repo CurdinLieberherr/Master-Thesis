@@ -1,13 +1,20 @@
-from modules import *
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import pycountry
+from modules import eurostats, orbis_parquet, prices, RealRate
+
+
+
 class MisallocationAnalysis():
     def __init__(self, country: str, start:int = 2015, end:int=2024):
         self.country = country
         country_iso = get_country_iso(country)
-        self.fin = read_parquet(country_iso, start=start, end=end)
-        self.eurostats = get_eurostats_data(self.country)
-        self.prices = price_indexes(self.country)
-        self.capi = capital_prices(self.country)
-        self.realrate = RealRate(self.country)
+        self.fin = orbis_parquet.read_parquet(country_iso, start=start, end=end)
+        self.eurostats = eurostats.get_eurostats_data(self.country)
+        self.prices = prices.price_indexes(self.country)
+        self.capi = prices.capital_prices(self.country)
+        self.realrate = RealRate.RealRate(self.country)
         self.df = self._main_df()
         self.sector_weights = self._calculate_sector_weights()
         self.dispt = self._calculate_dispersion()
@@ -283,5 +290,11 @@ class MisallocationAnalysis():
 def winsorise(s, lower=0.01, upper=0.99):
     lo, hi = s.quantile([lower, upper])
     return s.clip(lo, hi)
+
+
+
+def get_country_iso(name):
+    country = pycountry.countries.search_fuzzy(name)[0]
+    return country.alpha_2
 
             
