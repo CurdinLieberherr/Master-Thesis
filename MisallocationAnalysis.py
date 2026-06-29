@@ -19,7 +19,8 @@ class MisallocationAnalysis():
         self.realrate = RealRate.RealRate(self.country)
         self.df = self._main_df()
         self.sector_weights = self._calculate_sector_weights()
-        self.dispt = self._calculate_dispersion()
+        self.dispt, self.disp = self._calculate_dispersion()
+        self.dispt_sector = self._dispersion_per_sector()
         self.tfpdf = self._estimate_productivity()
         self.cap_moments = self._capital_moments()
 
@@ -140,8 +141,57 @@ class MisallocationAnalysis():
         dispt = disp.groupby('year').agg({'w_disp_MRPK': 'sum', 'w_disp_MRPL': 'sum', 'w_disp_TFPR': 'sum'})
         dispt = dispt.sort_index(ascending=True)
         
-        return dispt
+        return dispt, disp
     
+    def _dispersion_per_sector(self):
+        df = self.disp.copy()
+        df['sector'] = df['sector'].str[:2]
+        grouped = df.groupby(['sector', 'year'])['w_disp_MRPK'].sum().reset_index().sort_values(['sector', 'year'],ascending=True)
+
+        grouped['w_disp_rel'] = grouped.groupby('sector')['w_disp_MRPK'].transform(
+            lambda x: x / x.iloc[0]
+        )
+
+        sector_variation = (
+            grouped.groupby('sector')['w_disp_rel']
+            .agg(
+                std='var'
+            )
+            .sort_values('std', ascending=False).reset_index()
+        )
+
+        #merge sectorname
+        names = get_sector_description()
+        sector_variation = sector_variation.merge(names, left_on='sector', right_on='Codes')
+
+        return sector_variation
+    
+    def plot_top_dispersion_sector(self, n:int=5):
+        df = self.disp.copy()
+        df['sector'] = df['sector'].str[:2]
+        grouped = df.groupby(['sector', 'year'])['w_disp_MRPK'].sum().reset_index().sort_values(['sector', 'year'],ascending=True)
+
+        grouped['w_disp_rel'] = grouped.groupby('sector')['w_disp_MRPK'].transform(
+            lambda x: x / x.iloc[0]
+        )
+
+        top = self.dispt_sector['sector'][:n].to_list()
+        grouped = grouped[grouped['sector'].isin(top)]
+
+        names = get_sector_description()
+        grouped = grouped.merge(names, left_on='sector', right_on='Codes')
+
+        fig, ax = plt.subplots()
+        for sector, group in grouped.groupby('Labels'):
+            ax.plot(group['year'], group['w_disp_rel'], label=sector)
+
+        ax.legend()
+        plt.show()
+
+        return fig
+
+
+
     def plot_dispersion(self, figsize = (8,6)):
         plotdf = self.dispt.copy()
         plotdf = plotdf / plotdf.iloc[0]
@@ -365,5 +415,13 @@ def winsorise(s, lower=0.01, upper=0.99):
 def get_country_iso(name):
     country = pycountry.countries.search_fuzzy(name)[0]
     return country.alpha_2
+
+
+def get_sector_description() -> pd.DataFrame:
+    file = '/Users/curdinlieberherr/Library/Mobile Documents/com~apple~CloudDocs/Uni/26 FS/Thesis/Data Work/Data/EU Producer Prices Country Sector 1992 - 2025 2021=100.xlsx'
+    df = pd.read_excel(file, header=10, dtype=str)[['NACE_R2 (Codes)', 'NACE_R2 (Labels)']].drop_duplicates()
+    df = df.rename(columns={'NACE_R2 (Codes)': 'Codes', 'NACE_R2 (Labels)': 'Labels'})
+    df['Codes'] = df['Codes'].str[1:]
+    return df
 
             
