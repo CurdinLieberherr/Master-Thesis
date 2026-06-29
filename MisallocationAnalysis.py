@@ -103,7 +103,7 @@ class MisallocationAnalysis():
         alpha = 0.35
         markup = 1
 
-        df = self.df.copy()
+        df = self.df
 
         # see gopinath p. 1926
         #calculate mrpk
@@ -221,30 +221,40 @@ class MisallocationAnalysis():
 
         return fig
 
-    def plot_mrpk_tfp_realrate(self, figsize = (8,6)):
-        #get dispersion dataframe
+    def plot_mrpk_tfp_realrate(self, figsize=(8, 6)):
+        # get dispersion dataframe
         plotdf = self.dispt.copy()
         plotdf = plotdf.merge(self.tfpdf, left_index=True, right_index=True)
-        #calculate relative change
+        # calculate relative change
         plotdf = (plotdf / plotdf.iloc[0]) - 1
         plotdf = plotdf.reset_index()
-        #add realinterestrate
+        # add realinterestrate
         plotdf = plotdf.merge(self.realrate.df[['year', 'realinterestrate']].drop_duplicates('year'), on='year', how='left')
-        #calculate change or real interestrate
-        plotdf['realinterestrate'] = plotdf['realinterestrate'] - plotdf.loc[0,'realinterestrate']
-
+        # calculate change of real interest rate
+        plotdf['realinterestrate'] = plotdf['realinterestrate'] - plotdf.loc[0, 'realinterestrate']
 
         fig, ax1 = plt.subplots(figsize=figsize)
 
-        ax1.plot(plotdf["year"], plotdf["w_disp_MRPK"], label="MRPK Dispersion", color="#1f77b4", linewidth=2)
-        ax1.plot(plotdf["year"], plotdf["realinterestrate"], label="Real Interest Rate", color="#ff7f0e", linewidth=2, linestyle="--")
-        ax1.plot(plotdf["year"], plotdf["log_tfp"], label="TFP", color="green", linewidth=2, linestyle=":")
+        # --- Left axis: MRPK and TFP ---
+        l1, = ax1.plot(plotdf["year"], plotdf["w_disp_MRPK"], label="MRPK Dispersion", color="#1f77b4", linewidth=2)
+        l2, = ax1.plot(plotdf["year"], plotdf["log_tfp"], label="TFP", color="green", linewidth=2, linestyle=":")
 
-        ax1.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10))
-
+        ax1.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
         ax1.set_xlabel("Year")
         ax1.set_ylabel(f"Normalized ({plotdf['year'].iloc[0]} = 0)")
-        ax1.legend(loc="lower left")
+
+        # --- Right axis: Real Interest Rate ---
+        ax2 = ax1.twinx()
+        ax2.axhline(y=0, color="#ff7f0e", linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
+        l3, = ax2.plot(plotdf["year"], plotdf["realinterestrate"], label="Real Interest Rate", color="#ff7f0e", linewidth=2, linestyle="--")
+        ax2.set_ylabel("Δ Real Interest Rate (pp)", color="#ff7f0e")
+        ax2.tick_params(axis='y', labelcolor="#ff7f0e")
+
+        # --- Combined legend ---
+        lines = [l1, l2, l3]
+        labels = [l.get_label() for l in lines]
+        ax1.legend(lines, labels, loc="lower left")
+
         ax1.set_title(f"{self.country} - MRPK Dispersion vs. Real Interest Rate vs. TFP.")
 
         plt.tight_layout()
@@ -280,6 +290,55 @@ class MisallocationAnalysis():
         ax1.set_ylabel('Standard Deviation of log(k)')
         ax2.plot(cap.index, cap['corr'])
         ax2.set_ylabel('Correlation of log(k) with log(Z)')
+
+        plt.tight_layout()
+        plt.show()
+
+        return fig
+    
+    def plot_capital_wedges(self, figsize = (14,5)):
+        DELTA = 0.1
+        df = self.df.copy()
+        df['log_tau_k'] = np.log(df['w']) + df['log_MRPK'] - np.log(df['realinterestrate'] + DELTA) - df['log_MRPL']
+
+        # ── Assign groups: bottom 50% vs top 10% ────────────────────────
+        def assign_group(x):
+            p50 = x.quantile(0.50)
+            p90 = x.quantile(0.90)
+            groups = pd.Series('middle', index=x.index)
+            groups[x <= p50] = 'Bottom 50%'
+            groups[x >= p90] = 'Top 10%'
+            return groups
+
+        df['size_group'] = df.groupby('year')['k'].transform(assign_group)
+
+        # ── Group means ──────────────────────────────────────────────────
+        group_tau = (df[df['size_group'] != 'middle']
+                    .groupby(['year', 'size_group'])['log_tau_k']
+                    .mean()
+                    .unstack())
+        group_tau['gap'] = group_tau['Bottom 50%'] - group_tau['Top 10%']
+
+        # ── Plots ────────────────────────────────────────────────────────
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+        # Plot 1: log tau_k by group
+        for grp, color in zip(['Bottom 50%', 'Top 10%'], ['steelblue', 'firebrick']):
+            axes[0].plot(group_tau.index, group_tau[grp], marker='o', label=grp, color=color)
+
+        axes[0].set_title('Log $\\tau_k$: Bottom 50\\% vs Top 10\\%')
+        axes[0].set_xlabel('Year')
+        axes[0].set_ylabel('Mean log $\\tau_k$')
+        axes[0].legend()
+        axes[0].grid(True, linestyle='--', alpha=0.5)
+
+        # Plot 2: Gap
+        axes[1].plot(group_tau.index, group_tau['gap'], marker='o', color='darkorange')
+        axes[1].axhline(0, color='black', linewidth=0.8, linestyle='--')
+        axes[1].set_title('Gap in log $\\tau_k$: Bottom 50\\% $-$ Top 10\\%')
+        axes[1].set_xlabel('Year')
+        axes[1].set_ylabel('Gap')
+        axes[1].grid(True, linestyle='--', alpha=0.5)
 
         plt.tight_layout()
         plt.show()
