@@ -72,4 +72,4 @@ def get_real_interest_rate(country:str):
 
     rirate['year'] = rirate['year'].astype(int)
 
-    return rirate
+    return rirate.sort_values('year', ascending=True)

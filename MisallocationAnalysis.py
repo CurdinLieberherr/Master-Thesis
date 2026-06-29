@@ -8,6 +8,8 @@ from modules import eurostats, orbis_parquet, prices, RealRate
 
 class MisallocationAnalysis():
     def __init__(self, country: str, start:int = 2015, end:int=2024):
+        self.start = start
+        self.end = end
         self.country = country
         country_iso = get_country_iso(country)
         self.fin = orbis_parquet.read_parquet(country_iso, start=start, end=end)
@@ -19,6 +21,7 @@ class MisallocationAnalysis():
         self.sector_weights = self._calculate_sector_weights()
         self.dispt = self._calculate_dispersion()
         self.tfpdf = self._estimate_productivity()
+        self.cap_moments = self._capital_moments()
 
     def _main_df(self) -> pd.DataFrame:
 
@@ -221,7 +224,7 @@ class MisallocationAnalysis():
 
         return fig
 
-    def plot_mrpk_tfp_realrate(self, figsize=(8, 6)):
+    def plot_mrpk_tfp_realrate(self, figsize=(6, 4)):
         # get dispersion dataframe
         plotdf = self.dispt.copy()
         plotdf = plotdf.merge(self.tfpdf, left_index=True, right_index=True)
@@ -262,7 +265,7 @@ class MisallocationAnalysis():
 
         return fig
     
-    def plot_capital_tfp_moments(self, figsize = (10,6)):
+    def _capital_moments(self):
         cap = self.df.copy()
 
         cap['k'] = np.log(cap['k'])
@@ -283,6 +286,13 @@ class MisallocationAnalysis():
 
         cap = cap.groupby('year').agg(corr = ('wcorr', 'sum'),
                                 stdK = ('wstdk', 'sum'))
+        
+        return cap
+
+    
+    def plot_capital_tfp_moments(self, figsize = (10,4)):
+        
+        cap = self.cap_moments
 
         fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=figsize)
 
@@ -296,7 +306,7 @@ class MisallocationAnalysis():
 
         return fig
     
-    def plot_capital_wedges(self, figsize = (14,5)):
+    def plot_capital_wedges(self, figsize = (10,4)):
         DELTA = 0.1
         df = self.df.copy()
         df['log_tau_k'] = np.log(df['w']) + df['log_MRPK'] - np.log(df['realinterestrate'] + DELTA) - df['log_MRPL']
