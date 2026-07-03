@@ -4,7 +4,6 @@ import pandas as pd
 
 def read_parquet(country_iso: str, start:int, end:int) -> pd.DataFrame:
     financials = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/industry_global_financials_and_ratios_eur"
-    #financials = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/financials_history_quarterly_industry_global_financials_and_ratios_eur"
     addresses = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/all_addresses"
     sectors = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/industry_classifications"
 

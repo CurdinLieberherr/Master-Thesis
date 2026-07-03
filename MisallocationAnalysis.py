@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import pycountry
-from modules import eurostats, orbis_parquet, prices, RealRate
+from modules import eurostats, orbis_parquet, prices, RealRate, WithinFirmMoments
 
 
 
@@ -89,8 +89,9 @@ class MisallocationAnalysis():
         df = df[df['w'] > 0]
 
         if 'netfirmvalue' in df.columns:
+            df['a'] = df['netfirmvalue'] / df['priceind']
             df = df[df['netfirmvalue'] > 0]
-            df = df[df['debt'] > 0]
+            df = df[df['a'] > 0]
 
         #add real interest rate
         df = df.merge(self.realrate.df[['year', 'realinterestrate']], on='year', how='left')
@@ -437,6 +438,37 @@ class MisallocationAnalysis():
         plt.show()
 
         return fig
+    
+    def estimate_distributional_moments(self):
+        vars = ['Z_pow', 'k', 'l']
+        df = self.df.copy()[['sector', 'year'] + vars]
+        df[vars] = np.log(df[vars])
+        for var in vars:
+            df[var] = df.groupby(['sector', 'year'])[var].transform(winsorise)
+        df = df.groupby('sector')[vars].agg('std').reset_index()
+        df = pd.merge(df, self.sector_weights, on='sector', how='left')
+        for var in vars:
+            df[var] = df[var] * df['sectorweight']
+        distmoments = df[vars].sum().round(2)
+        distmoments.index = [f'Std.dev.(log {i})' for i in vars]
+
+        def top20_share(group, cols):
+            result = {}
+            for col in cols:
+                threshold = group[col].quantile(0.80)
+                top20_sum = group.loc[group[col] >= threshold, col].sum()
+                result[col] = top20_sum / group[col].sum()
+            return pd.Series(result)
+
+        cols = ['l', 'k']
+        result = self.df.copy().groupby('year').apply(lambda g: top20_share(g, cols))[cols].mean().round(2)
+        result.index = [f'Top 20% Share of {var}' for var in cols]
+
+        self.distributional_moments = pd.concat([distmoments,result], axis=0)
+
+    def estimate_within_firm_moments(self):
+        self.within_firm_moments = WithinFirmMoments.WithinFirmMoments(self.df)
+    
 
 #winsorize function to drop the stupid ones
 def winsorise(s, lower=0.01, upper=0.99):
