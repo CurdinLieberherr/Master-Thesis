@@ -93,7 +93,7 @@ class MisallocationAnalysis():
             df = df[df['a'] > 0]
 
             df['b'] = df['debt'] / df['capitalprice']
-            df[df['b'] > 0]
+            df[df['b'] >= 0]
 
         #add real interest rate
         df = df.merge(self.realrate.df[['year', 'realinterestrate']], on='year', how='left')
@@ -470,6 +470,49 @@ class MisallocationAnalysis():
 
     def estimate_within_firm_moments(self):
         self.within_firm_moments = WithinFirmMoments.WithinFirmMoments(self.df)
+
+    def estimate_cross_sectional_moments(self):
+        df = self.df.copy()
+
+        #calculate borrower share
+        borrower_share = (df['b'] > 0).mean()
+
+        #calculate correlations
+        vars = ['Z_pow', 'k', 'a', 'MRPK']
+        for var in vars:
+            df[var] = np.log(df[var])
+
+        results = pd.Series([
+            borrower_share,
+            df['Z_pow'].corr(df['k']),
+            df['Z_pow'].corr(df['a']),
+            df['MRPK'].corr(df['Z_pow']),
+            df['MRPK'].corr(df['k']),
+            df['MRPK'].corr(df['a'])
+        ], index=['Fraction borrowing',
+                'Corr (log Z, log k)',
+                'Corr (log Z, log a)',
+                'Corr (log MRPK, log Z)',
+                'Corr (log MRPK, log k)',
+                'Corr (log MRPK, log a)']).round(2)
+        
+        self.cross_sectional_moments = results
+
+    def all_moments(self):
+        self.estimate_distributional_moments()
+        self.estimate_within_firm_moments()
+        self.estimate_cross_sectional_moments()
+
+        all = pd.concat([self.distributional_moments,
+                        self.within_firm_moments.coefs['parameter'],
+                        self.cross_sectional_moments])
+
+        self.all_moments = all
+
+        return all
+
+
+
     
 
 #winsorize function to drop the stupid ones
