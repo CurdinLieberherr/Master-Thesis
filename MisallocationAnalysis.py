@@ -26,7 +26,35 @@ class MisallocationAnalysis():
 
     def _main_df(self) -> pd.DataFrame:
 
+         #rename the data
+        namedict = {
+            'bvd_id_number' : 'FirmName',
+            'nace_code':   'sector',
+            'current_assets' : 'assets',
+            'sales' : 'revenue',
+            'material_costs': 'materials',
+            'number_of_employees': 'nEmployees',
+            'costs_of_employees': 'wagebill',
+            'long_term_debt': 'debt',
+            'year': 'year'
+        }
+
         df = self.fin.copy()
+
+        #clean liabilites i assume that at leas one info about liabilites have to be in the data
+        cols = ['non_current_liabilities', 'other_non_current_liabilities', 
+        'current_liabilities', 'other_current_liabilities']
+        if all(col in df.columns for col in cols + ['total_assets']):
+            df = df.dropna(subset=cols, how='all')
+            df['liabilites'] = df[cols].sum(axis=1)
+            df['netfirmvalue'] = df['total_assets'] - df['liabilites']
+            namedict['netfirmvalue'] = 'netfirmvalue'
+            namedict['long_term_debt'] = 'debt'
+
+
+        df['year'] = df['closing_date'].dt.year.astype(str)
+        df = df.rename(columns=namedict)
+        df = df[namedict.values()]
 
         #merge priceindexes 
         df['sector2d'] = df['sector'].astype(str).str[:2]
@@ -59,6 +87,10 @@ class MisallocationAnalysis():
         df = df[df['nvad'] > 0]
         df = df[df['k'] > 0]
         df = df[df['w'] > 0]
+
+        if 'netfirmvalue' in df.columns:
+            df = df[df['netfirmvalue'] > 0]
+            df = df[df['debt'] > 0]
 
         #add real interest rate
         df = df.merge(self.realrate.df[['year', 'realinterestrate']], on='year', how='left')
@@ -155,7 +187,8 @@ class MisallocationAnalysis():
         sector_variation = (
             grouped.groupby('sector')['w_disp_rel']
             .agg(
-                std='var'
+                std='var',
+                abs_change=lambda x: x.iloc[-1] - x.iloc[0]
             )
             .sort_values('std', ascending=False).reset_index()
         )

@@ -3,8 +3,8 @@ import duckdb
 import pandas as pd
 
 def read_parquet(country_iso: str, start:int, end:int) -> pd.DataFrame:
-    #financials = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/industry_global_financials_and_ratios_eur"
-    financials = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/financials_history_quarterly_industry_global_financials_and_ratios_eur"
+    financials = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/industry_global_financials_and_ratios_eur"
+    #financials = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/financials_history_quarterly_industry_global_financials_and_ratios_eur"
     addresses = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/all_addresses"
     sectors = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/industry_classifications"
 
@@ -49,18 +49,4 @@ def read_parquet(country_iso: str, start:int, end:int) -> pd.DataFrame:
 
     df = duckdb.query(sql).df()
 
-    df['year'] = df['closing_date'].dt.year.astype(str)
-
-    namedict = {
-    'bvd_id_number' : 'FirmName',
-    'nace_code':   'sector',
-    'current_assets' : 'assets',
-    'sales' : 'revenue',
-    'material_costs': 'materials',
-    'number_of_employees': 'nEmployees',
-    'costs_of_employees': 'wagebill'
-    }
-
-    df = df.rename(columns=namedict)
-
-    return df[['FirmName', 'assets', 'revenue', 'wagebill', 'nEmployees', 'materials', 'sector', 'year']]
+    return df
