@@ -81,7 +81,6 @@ class MisallocationAnalysis():
             df['w'] = (df['wagebill'] / df['nEmployees']) / df['priceind']
         else:
             df['w'] = df['wage'] / df['priceind']
-            df['b'] = df['debt'] / df['priceind']
 
         #drop non positive values and prices
         df = df[df['nvad'] > 0]
@@ -92,6 +91,9 @@ class MisallocationAnalysis():
             df['a'] = df['netfirmvalue'] / df['priceind']
             df = df[df['netfirmvalue'] > 0]
             df = df[df['a'] > 0]
+
+            df['b'] = df['debt'] / df['capitalprice']
+            df[df['b'] > 0]
 
         #add real interest rate
         df = df.merge(self.realrate.df[['year', 'realinterestrate']], on='year', how='left')
