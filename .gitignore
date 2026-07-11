@@ -4,3 +4,4 @@ plots
 *.pkl
 .vscode/
 test.ipynb
+analysis_database/

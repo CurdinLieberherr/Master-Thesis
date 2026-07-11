@@ -498,7 +498,7 @@ class MisallocationAnalysis():
         
         self.cross_sectional_moments = results
 
-    def all_moments(self):
+    def estimate_all_moments(self):
         self.estimate_distributional_moments()
         self.estimate_within_firm_moments()
         self.estimate_cross_sectional_moments()
