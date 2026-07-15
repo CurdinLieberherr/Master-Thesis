@@ -69,12 +69,14 @@ class MisallocationAnalysis():
         df = df[df['capitalprice'].notna()]
 
         #calculate base variables
-        #calculate firm nominal value added
-        df['nvad'] = df['revenue'] - df['materials']
 
         #deflate assets and wagebill to get k and l with pricindex
         df['k'] = df['assets'] / df['capitalprice']   
-        df['y'] = df['nvad'] / df['priceind']
+        df['revenue'] = df['revenue'] / df['priceind']
+        df['materials'] = df['materials'] / df['priceind']
+
+        #calculate firm nominal value added as y
+        df['nvad'] = df['revenue'] - df['materials']
 
         if 'wagebill' in df.columns:
             df['l'] = df['wagebill'] / df['priceind']
@@ -83,9 +85,11 @@ class MisallocationAnalysis():
             df['w'] = df['wage'] / df['priceind']
 
         #drop non positive values and prices
-        df = df[df['nvad'] > 0]
         df = df[df['k'] > 0]
         df = df[df['w'] > 0]
+        df = df[df['nvad'] > 0]
+        df = df[df['revenue'] > 0]
+        df = df[df['materials'] > 0]
 
         if 'netfirmvalue' in df.columns:
             df['a'] = df['netfirmvalue'] / df['priceind']
@@ -268,7 +272,7 @@ class MisallocationAnalysis():
         log_tfpe_st =   ((1/(EPSILON-1)) 
                     * (np.log(sdf['FirmName'].count()) + np.log(sdf['Z_pow'].mean()) )
                     )
-        log_tfp_st = np.log(sdf['y'].sum()) - alpha * np.log(sdf['k'].sum()) - (1-alpha) * np.log(sdf['l'].sum())
+        log_tfp_st = np.log(sdf['nvad'].sum()) - alpha * np.log(sdf['k'].sum()) - (1-alpha) * np.log(sdf['l'].sum())
         #multiply with the sectorweights and sum to get tfp and tfpe per year
         tfp_st_df = pd.concat([log_tfpe_st, log_tfp_st], axis=1)
         tfp_st_df.columns = ['log_tfpe_st', 'log_tfp_st']
