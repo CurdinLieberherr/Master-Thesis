@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import pycountry
+import statsmodels.api as sm
+from typing import Literal
 from modules import eurostats, orbis_parquet, prices, RealRate, WithinFirmMoments
 
 
@@ -514,6 +516,175 @@ class MisallocationAnalysis():
         self.all_moments = all
 
         return all
+    
+    def estimate_corrected_measures(self):
+        df = self.df.copy()
+        print(len(df))
+        df = df.sort_values(['FirmName', 'year'])
+
+        #create total cost for weigh
+        df['total_cost'] = df['k'] + df['w'] + df['materials']
+        df['cost_weight'] = df['total_cost'] / df.groupby(['sector','year'])['total_cost'].transform('sum')
+
+        # share weights - use empirical cost shares
+        df['s_K'] = df['k'] / df['total_cost']
+        df['s_L'] = df['w'] / df['total_cost']
+        df['s_X'] = df['materials'] / df['total_cost']
+
+        # calculate cost weightes sector year average TFPR
+        df['wlnTFPR'] = df['cost_weight'] * df['log_TFPR']
+        df['meanlnTFPR'] = df.groupby(['sector', 'year'])['wlnTFPR'].transform('sum')
+        df['TFPRdev'] = df['log_TFPR'] - df['meanlnTFPR']
+
+        #create logs of inputs and lags
+        df['lnK'] = np.log(df['k'])
+        df['lnL'] = np.log(df['w'])
+        df['lnX'] = np.log(df['materials'])
+        df['lnR'] = np.log(df['revenue'])
+
+        #create lags and consecutive logic
+        df['lnKlag'] = df.groupby('FirmName')['lnK'].shift(1) 
+        df['lnLlag'] = df.groupby('FirmName')['lnL'].shift(1) 
+        df['lnXlag'] = df.groupby('FirmName')['lnX'].shift(1) 
+        df['lnRlag'] = df.groupby('FirmName')['lnR'].shift(1)
+
+        df['TFPRdevlag'] = df.groupby('FirmName')['TFPRdev'].shift(1) 
+        df['yearlag'] = df.groupby('FirmName')['year'].shift(1)
+        df['consecutive'] = (df['year'] - df['yearlag']) == 1
+
+
+        #calculate growth and average mrpk deviation
+        for var in ['lnK', 'lnL', 'lnX', 'lnR']:
+            df[f'd{var}'] = np.where(
+                df['consecutive'],
+                df[var] - df[f'{var}lag'],
+                np.nan
+            )
+
+        df['TFPRmeandev'] = np.where(
+            df['consecutive'],
+            (df['TFPRdev'] + df['TFPRdevlag']) / 2,
+            np.nan
+        )
+
+        df['decile'] = pd.qcut(df['TFPRmeandev'], 10, labels=False) + 1
+
+        #sum cost by weights
+        df['dlnI'] = df['s_K']*df['dlnK'] + df['s_L']*df['dlnL'] + df['s_X']*df['dlnX']
+
+        # demean growth rates by sector-year (removes common sector-year shocks)
+        df['dR dev'] = df['dlnR'] - df.groupby(['sector', 'year'])['dlnR'].transform('mean')
+        df['dI dev'] = df['dlnI'] - df.groupby(['sector', 'year'])['dlnI'].transform('mean')
+
+        df = df[df['consecutive']]
+        print(len(df))
+
+        # --- 6. regress dR_dev on dI_dev, separately per decile, weighted by cost share ---
+        beta_by_decile = {}
+        se_by_decile = {}
+        reg_data = df.dropna(subset=['dR dev', 'dI dev', 'decile'])
+
+        for k, g in reg_data.groupby('decile'):
+            X = sm.add_constant(g['dI dev'])
+            y = g['dR dev']
+            model = sm.WLS(y, X, weights=g['cost_weight']).fit()
+            beta_by_decile[k] = model.params['dI dev']
+            se_by_decile[k] = model.bse['dI dev']
+
+        results = pd.DataFrame({'beta': beta_by_decile, 'se': se_by_decile}).sort_index().reset_index().rename(columns={'index': 'decile'})
+
+        self.decile_betas = results
+
+        ## from betas calculate corrected values
+        df['decile_weight'] = df['total_cost'] / df.groupby(['decile','year'])['total_cost'].transform('sum')
+        df['decile_weighted_tfpr'] = df['TFPR'] * df['decile_weight']
+
+        #group deciles to get total ln tfpr per decile
+        decile_means = df.groupby('decile').agg(
+            ln_tfpr_k=('decile_weighted_tfpr', 'sum')
+        ).reset_index()
+        decile_means['ln_tfpr_k'] = np.log(decile_means['ln_tfpr_k'])
+        #merge with results to get beta per decile
+        decile_means = decile_means.merge(results, on='decile', how='left')
+        decile_means['lnbeta'] = np.log(decile_means['beta'])
+        #calculate covariance term and variance term of equation 49 in klenow 2021 to get sigma
+        cov_term = np.cov(decile_means['ln_tfpr_k'], decile_means['lnbeta'])[0, 1]
+        var_beta = decile_means['lnbeta'].var()
+        sigma2 = -cov_term - var_beta
+        sigma = np.sqrt(max(sigma2, 0))
+        #get epsilon for whole df from sigma
+        np.random.seed(0)
+        df['epsilon'] = np.random.normal(loc=0.0, scale=sigma, size=len(df))
+        #calculate corrected values
+        df = df.merge(decile_means, on='decile', how='left')
+        df['corrected MRPK'] = df['log_MRPK'] + df['lnbeta'] + df['epsilon']
+        df['corrected MRPL'] = df['log_MRPL'] + df['lnbeta'] + df['epsilon']
+
+        self.corrected_measures = df[['FirmName', 'year', 'corrected MRPK', 'corrected MRPL']]
+
+    def plot_correct_measures(self, measure: Literal['MRPK', 'MRPL']):
+        df = self.df.merge(self.corrected_measures, on=['FirmName', 'year'], how='right')
+
+        VARS = [f'log_{measure}',f'corrected {measure}']
+        plotdf = df[VARS + ['nvad',  'year']].copy()
+        plotdf['weight'] = plotdf['nvad'] / plotdf.groupby('year')['nvad'].transform('sum')
+
+        for var in VARS:
+            plotdf[var] = plotdf[var] * plotdf['weight']
+
+        plotdf = plotdf.groupby('year')[VARS].sum().reset_index()
+
+        fig,ax1 = plt.subplots(figsize=(6,4))
+
+        for var in VARS:
+            ax1.plot(plotdf["year"], plotdf[var], label=var,  linewidth=2)
+
+        plt.legend()
+        plt.show()
+        return fig
+    
+    def _recalculate_correct_dispersion(self):
+        df = self.df.copy()
+        for var in ['log_MRPK', 'log_MRPL', 'log_TFPR']:
+            df[var] = df.groupby(['sector', 'year'])[var].transform(winsorise)
+
+        #group by sector, year and take std
+        disp = df.groupby(['sector', 'year']).agg(
+                            disp_MRPK=('log_MRPK', 'std'),
+                            disp_MRPL=('log_MRPL', 'std'),
+                            disp_TFPR=('log_TFPR', 'std')).reset_index()
+
+        #merge weights with dispersion on sector and sum
+        disp = pd.merge(disp, self.sector_weights, on='sector', how='left')
+        disp['w_disp_MRPK'] = disp['disp_MRPK'] * disp['sectorweight']
+        disp['w_disp_MRPL'] = disp['disp_MRPL'] * disp['sectorweight']
+        disp['w_disp_TFPR'] = disp['disp_TFPR'] * disp['sectorweight']
+        #get dispersion weighted on sectors per year
+        dispt = disp.groupby('year').agg({'w_disp_MRPK': 'sum', 'w_disp_MRPL': 'sum', 'w_disp_TFPR': 'sum'})
+        dispt = dispt.sort_index(ascending=True)
+        
+        return dispt, disp
+    
+    
+    def inplace_correct_measures(self):
+        self.df = self.df.merge(self.corrected_measures, on=['FirmName', 'year'], how='right')
+
+        self.df['log_MRPK'] = self.df['corrected MRPK']
+        self.df['log_MRPL'] = self.df['corrected MRPL']
+        self.df['MRPK'] = np.exp(self.df['corrected MRPK'])
+        self.df['MRPL'] = np.exp(self.df['corrected MRPL'])
+
+        alpha = 0.35
+        mu = 1
+
+        self.df['log_TFPR'] = (
+            np.log(mu)
+            + alpha * (self.df['log_MRPK'] - np.log(alpha))
+            + (1 - alpha) * (self.df['log_MRPL'] - np.log(1 - alpha))
+        )
+        self.df['TFPR'] = np.exp(self.df['log_TFPR'])
+
+        self.dispt, self.disp = self._recalculate_correct_dispersion()
 
 
 
