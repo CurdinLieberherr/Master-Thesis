@@ -12,15 +12,26 @@ class WithinFirmMoments():
     def __init__(self, data: pd.DataFrame):
         self.capital_growth_regr, self.capital_growth_coefs = firm_capital_debt_regression(data, 'capital growth')
         self.debt_growth_regr, self.debt_growth_coefs = firm_capital_debt_regression(data, 'debt growth') 
+        self.capital_growth_start_end_regr, self.capital_growth_start_end_coefs = firm_capital_debt_regression(data, 'capital growth', consecutive=False)
 
-        all_coefs = pd.concat([self.capital_growth_coefs, self.debt_growth_coefs], axis=0)
-        self.coefs =  all_coefs
+        self.coefs = pd.concat([self.capital_growth_coefs, self.capital_growth_start_end_coefs, self.debt_growth_coefs], axis=0)
 
-def firm_capital_debt_regression(data: pd.DataFrame, dep_variable:Literal['capital growth', 'debt growth']):
+def firm_capital_debt_regression(data: pd.DataFrame, 
+        dep_variable:Literal['capital growth', 'debt growth'], 
+        consecutive:bool = True):
     # Assuming your dataframe has columns: firm, year, sector, Z, k, a
     # Sort by firm and year so k_{t+1} aligns correctly
     df = data.copy()
     df = df.sort_values(['FirmName', 'year'])
+
+    if consecutive == False:
+        start, end = df['year'].min(), df['year'].max()
+        #select firms that are appearing in start and end year
+        firms_start = set(df.loc[df['year'] == start, 'FirmName'])
+        firms_end = set(df.loc[df['year'] == end, 'FirmName'])
+        # intersection
+        valid_firms = firms_start & firms_end  
+        df = df[df['FirmName'].isin(valid_firms)]
 
     if dep_variable == 'capital growth':
         # Dependent variable: (k_{t+1} - k_t) / k_t
@@ -68,6 +79,6 @@ def firm_capital_debt_regression(data: pd.DataFrame, dep_variable:Literal['capit
     res = mod.fit(cov_type='clustered', cluster_entity=True)
 
     result = pd.concat([res.params, res.std_errors, res.tstats, res.pvalues], axis=1).round(3)
-    result.index = [f'Coefficient of {var} on firm {dep_variable}' for var in result.index]
+    result.index = [f'Coef {var} on {dep_variable}{(" t_0 - T" if consecutive == False else "")}' for var in result.index]
 
     return res, result

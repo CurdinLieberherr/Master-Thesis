@@ -1,8 +1,10 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import pycountry
 import statsmodels.api as sm
+import statsmodels.formula.api as smf
 from typing import Literal
 from modules import eurostats, orbis_parquet, prices, RealRate, WithinFirmMoments
 
@@ -144,11 +146,12 @@ class MisallocationAnalysis():
 
         return counts[['Year', 'Turnover','Wages', 'Value Added', 'Firms', 'Employees']].round(2)
     
-    def _calculate_dispersion(self):
+    def _calculate_dispersion(self, df:pd.DataFrame=None):
         alpha = 0.35
         markup = 1
 
-        df = self.df
+        if df is None:
+            df = self.df
 
         # see gopinath p. 1926
         #calculate mrpk
@@ -184,6 +187,31 @@ class MisallocationAnalysis():
         
         return dispt, disp
     
+    def _estimate_disp_large_firms(self, top:float = 0.05):
+        df = self.df.copy()
+
+        df['top5pct'] = df.groupby(['sector','year'])['k'].transform(
+        lambda x: x >= x.quantile(1-top)
+        )
+        df = df[df['top5pct']]
+
+        #group by sector, year and take std
+        disp = df.groupby(['sector', 'year']).agg(
+                            disp_MRPK=('log_MRPK', 'std'),
+                            disp_MRPL=('log_MRPL', 'std'),
+                            disp_TFPR=('log_TFPR', 'std')).reset_index()
+
+        #merge weights with dispersion on sector and sum
+        disp = pd.merge(disp, self.sector_weights, on='sector', how='left')
+        disp['w_disp_MRPK'] = disp['disp_MRPK'] * disp['sectorweight']
+        disp['w_disp_MRPL'] = disp['disp_MRPL'] * disp['sectorweight']
+        disp['w_disp_TFPR'] = disp['disp_TFPR'] * disp['sectorweight']
+        #get dispersion weighted on sectors per year
+        dispt = disp.groupby('year').agg({'w_disp_MRPK': 'sum', 'w_disp_MRPL': 'sum', 'w_disp_TFPR': 'sum'})
+        dispt = dispt.sort_index(ascending=True)
+        
+        return dispt
+
     def _dispersion_per_sector(self):
         df = self.disp.copy()
         df['sector'] = df['sector'].str[:2]
@@ -253,6 +281,66 @@ class MisallocationAnalysis():
         plt.show()
 
         return fig
+        
+    def plot_histogram_firm_size(self, figsize = (8,6)):
+        df = self.df[['year', 'k']].copy()
+
+        years = sorted(df['year'].unique())
+        colors = cm.viridis(np.linspace(0, 1, len(years)))  # or plt.cm.plasma, cm.turbo, cm.coolwarm
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        for year, color in zip(years, colors):
+            subset = df.loc[df['year'] == year, 'k']
+            ax.hist(np.log(subset), bins=40, alpha=0.5, label=str(year), density=True, color=color)
+
+        ax.set_xlabel(r'$\log(k)$')
+        ax.legend()
+        plt.show()
+
+        return fig
+
+
+    def plot_dispersion_small_large_firms(self, top = 0.05, figsize = (8,6)):
+        all = self.dispt.copy()
+        all = all.reset_index()
+        all['change'] = all['w_disp_MRPK'] / all.loc[0, 'w_disp_MRPK']
+
+        large = self._estimate_disp_large_firms(top)
+        large = large.reset_index()
+        large['change'] = large['w_disp_MRPK'] / large.loc[0, 'w_disp_MRPK']
+
+        # create plot
+        fig, ax1 = plt.subplots(figsize=figsize)
+        ax2 = ax1.twinx()  # second y-axis sharing the same x-axis
+
+        # absolute levels on ax1 (solid lines)
+        l1, = ax1.plot(all["year"], all["w_disp_MRPK"], label="all firms (level)",
+                    color="#1f77b4", linewidth=2, linestyle='-')
+        l2, = ax1.plot(large["year"], large["w_disp_MRPK"], label="large firms (level)",
+                    color="#d62728", linewidth=2, linestyle='-')
+
+        # normalized change on ax2 (dashed lines)
+        l3, = ax2.plot(all["year"], all["change"], label="all firms (change)",
+                    color="#1f77b4", linewidth=2, linestyle='--', alpha=0.7)
+        l4, = ax2.plot(large["year"], large["change"], label="large firms (change)",
+                    color="#d62728", linewidth=2, linestyle='--', alpha=0.7)
+
+        ax1.set_xlabel("Year")
+        ax1.set_ylabel("SD log MRPK (level)")
+        ax2.set_ylabel(f"SD log MRPK (change, {all['year'][0]} = 1)")
+        ax1.set_title(f"{self.country} - Dispersion of MRPK Small vs. Large Firms ({top})")
+
+        # combine legends from both axes into one
+        lines = [l1, l2, l3, l4]
+        labels = [line.get_label() for line in lines]
+        ax1.legend(lines, labels, loc='best')
+
+        plt.tight_layout()
+        plt.show()
+
+        return fig
+
+
 
     def _estimate_productivity(self):
         #calculate firm productivity z
@@ -685,6 +773,117 @@ class MisallocationAnalysis():
         self.df['TFPR'] = np.exp(self.df['log_TFPR'])
 
         self.dispt, self.disp = self._recalculate_correct_dispersion()
+
+    def exiters_regression(self):
+        df = self.df.copy()
+        # ── Classify firms ───────────────────────────────────────────────
+        last_year = df['year'].max()
+
+        # Each firm's true last observed year
+        last_obs = df.groupby('FirmName')['year'].max().rename('last_year')
+        df = df.join(last_obs, on='FirmName')
+
+        # Flag only the final observation of a firm that never comes back
+        df['exiter'] = (
+            (df['year'] == df['last_year']) &   # this is the firm's last row
+            (df['last_year'] < last_year)        # and it exits before data ends
+        ).astype(int)
+
+        #drop the last year because there cannot be any exiters
+        df = df[df['year'] < last_year]
+
+        #make sector to 2 digit level to have more observations for the fixed effects
+        df['sector2d'] = df['sector'].str[:2]
+
+        # ── For each sector, characterise exiters vs survivors ───────────
+        # along productivity (log_Z) and net worth (log_a)
+        df['log_a'] = np.log(df['a'])
+        df['log_Z'] = np.log(df['Z_pow'])
+
+
+        model = smf.logit(
+            'exiter ~ log_Z + log_a + C(sector2d) + C(year)',
+            data=df
+        ).fit(cov_type='cluster', cov_kwds={'groups': df['FirmName']}, disp=0)
+
+        summary_df = pd.DataFrame({
+            'coef': model.params,
+            'std_err': model.bse,
+            'p_value': model.pvalues,
+        })
+
+        return summary_df.loc[['log_Z', 'log_a']].round(3), model
+
+    def plot_mrpk_exiters_vs_remainers(self):
+        df = self.df.copy()
+
+        # Each firm's true last observed year
+        last_obs = df.groupby('FirmName')['year'].max().rename('last_year')
+        df = df.join(last_obs, on='FirmName')
+
+        df['exiter'] = (
+            (df['year'] == df['last_year']) &   # this is the firm's last row
+            (df['last_year'] < df['year'].max())        # and it exits before data ends
+        ).astype(int)
+
+        #compare mean log mrpk of exiters versus non exiters per year
+        vs = df.groupby(['sector', 'exiter', 'year'])['log_MRPK'].mean().reset_index()
+        vs = vs.merge(self.sector_weights, on='sector', how='left')
+        vs['log_MRPK'] = vs['log_MRPK']* vs['sectorweight']
+        vs = vs.groupby(['exiter', 'year'])['log_MRPK'].sum().round(2).unstack(level=0)
+
+        fig1 = vs.plot(figsize=(6, 4))
+        fig1.get_figure().savefig('plots/exitersvsstayers20002012.png', dpi=300)
+        plt.title('Mean log MRPK by year — exiters vs stayers')
+        plt.ylabel('Mean log MRPK')
+        plt.xlabel('Year')
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+        return fig1
+
+    def plot_dispersion_all_vs_survivors(self):
+        df = self.df.copy()
+
+        # Each firm's true last observed year
+        last_obs = df.groupby('FirmName')['year'].max().rename('last_year')
+        df = df.join(last_obs, on='FirmName')
+
+        # Flag only the final observation of a firm that never comes back
+        df['exiter'] = (
+            (df['year'] == df['last_year']) &   # this is the firm's last row
+            (df['last_year'] < df['year'].max())        # and it exits before data ends
+        ).astype(int)
+
+        df = df[df['exiter'] == 0]
+
+        #drop the last year because there cannot be any exiters
+        df = df[df['year'] < df['year'].max()]
+        #recalculate the dispersion
+        remaindispt, _ = self._calculate_dispersion(df=df)
+        #reuse full dipsersion
+        dispt = self.dispt.copy()
+        plotdf = dispt / dispt.iloc[0]
+        plotdf = plotdf.reset_index()
+        remaindispt = remaindispt/remaindispt.iloc[0]
+        remaindispt = remaindispt.reset_index()
+
+        #create plot 
+        fig, ax1 = plt.subplots()
+
+        ax1.plot(plotdf["year"], plotdf["w_disp_MRPK"], label="all", color="#1f77b4", linewidth=2)
+        ax1.plot(remaindispt["year"], remaindispt["w_disp_MRPK"], label="remainers", color="#d62728", linewidth=2)
+        ax1.set_title(f"all vs. remainers. {plotdf['year'][0]} = 1")
+        ax1.set_xlabel("Year")
+        ax1.set_ylabel("Standard Deviation")
+        ax1.legend()
+
+        plt.tight_layout()
+        plt.show()
+
+        return fig
+
 
 
 
