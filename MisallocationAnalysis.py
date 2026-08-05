@@ -8,15 +8,41 @@ import statsmodels.formula.api as smf
 from typing import Literal
 from modules import eurostats, orbis_parquet, prices, RealRate, WithinFirmMoments
 
+NACE_REV_2_SECTORS = {
+    "A": {"description": "Agriculture, forestry and fishing", "range": (1, 3)},
+    "B": {"description": "Mining and quarrying", "range": (5, 9)},
+    "C": {"description": "Manufacturing", "range": (10, 33)},
+    "D": {"description": "Electricity, gas, steam and air conditioning supply", "range": (35, 35)},
+    "E": {"description": "Water supply; sewerage, waste management and remediation activities", "range": (36, 39)},
+    "F": {"description": "Construction", "range": (41, 43)},
+    "G": {"description": "Wholesale and retail trade; repair of motor vehicles and motorcycles", "range": (45, 47)},
+    "H": {"description": "Transportation and storage", "range": (49, 53)},
+    "I": {"description": "Accommodation and food service activities", "range": (55, 56)},
+    "J": {"description": "Information and communication", "range": (58, 63)},
+    "K": {"description": "Financial and insurance activities", "range": (64, 66)},
+    "L": {"description": "Real estate activities", "range": (68, 68)},
+    "M": {"description": "Professional, scientific and technical activities", "range": (69, 75)},
+    "N": {"description": "Administrative and support service activities", "range": (77, 82)},
+    "O": {"description": "Public administration and defence; compulsory social security", "range": (84, 84)},
+    "P": {"description": "Education", "range": (85, 85)},
+    "Q": {"description": "Human health and social work activities", "range": (86, 88)},
+    "R": {"description": "Arts, entertainment and recreation", "range": (90, 93)},
+    "S": {"description": "Other service activities", "range": (94, 96)},
+    "T": {"description": "Activities of households as employers; undifferentiated goods- and services-producing activities of households for own use", "range": (97, 98)},
+    "U": {"description": "Activities of extraterritorial organisations and bodies", "range": (99, 99)},
+    "X": {"description": "All sectors", "range": (1,99)}
+}
 
+NaceSection = Literal["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U"]
 
 class MisallocationAnalysis():
-    def __init__(self, country: str, start:int = 2015, end:int=2024):
+    def __init__(self, country: str, start:int = 2015, end:int=2024, sector:NaceSection = "C"):
         self.start = start
         self.end = end
         self.country = country
         country_iso = get_country_iso(country)
-        self.fin = orbis_parquet.read_parquet(country_iso, start=start, end=end)
+        sectormin, sectormax = NACE_REV_2_SECTORS[sector]['range'] 
+        self.fin = orbis_parquet.read_from_partitioned_file(country_iso, start=start, end=end, sectormin=sectormin, sectormax=sectormax)
         self.eurostats = eurostats.get_eurostats_data(self.country)
         self.prices = prices.price_indexes(self.country)
         self.capi = prices.capital_prices(self.country)
@@ -907,5 +933,3 @@ def get_sector_description() -> pd.DataFrame:
     df = df.rename(columns={'NACE_R2 (Codes)': 'Codes', 'NACE_R2 (Labels)': 'Labels'})
     df['Codes'] = df['Codes'].str[1:]
     return df
-
-            
