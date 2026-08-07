@@ -1,4 +1,7 @@
 import pandas as pd
+import warnings
+warnings.filterwarnings('ignore')
+
 
 
 def get_eurostats_data(country: str = None):

@@ -1,4 +1,7 @@
 import pandas as pd
+import warnings
+warnings.filterwarnings('ignore')
+
 
 def capital_prices(country: str):
     #capital prices eurostat

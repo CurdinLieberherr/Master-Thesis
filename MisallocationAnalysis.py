@@ -468,7 +468,7 @@ class MisallocationAnalysis():
         # add realinterestrate
         plotdf = plotdf.merge(self.realrate.df[['year', 'realinterestrate']].drop_duplicates('year'), on='year', how='left')
         # calculate change of real interest rate
-        plotdf['realinterestrate'] = plotdf['realinterestrate'] - plotdf.loc[0, 'realinterestrate']
+        plotdf['realinterestrate'] = np.where(plotdf['realinterestrate'].isna(), np.nan, plotdf['realinterestrate'] - plotdf['realinterestrate'].dropna().iloc[0])
 
         fig, ax1 = plt.subplots(figsize=figsize)
 

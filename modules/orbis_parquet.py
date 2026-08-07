@@ -1,6 +1,7 @@
 
 import duckdb
 import pandas as pd
+import os
 
 def read_parquet(country_iso: str, start:int, end:int) -> pd.DataFrame:
     financials = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/industry_global_financials_and_ratios_eur"
@@ -50,7 +51,7 @@ def read_parquet(country_iso: str, start:int, end:int) -> pd.DataFrame:
 
     return df
 
-def partition_db_to_country_files():
+def partition_db_to_country_files(countries: list[str]):
     import duckdb
     import os
     financials = "/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/industry_global_financials_and_ratios_eur"
@@ -60,7 +61,6 @@ def partition_db_to_country_files():
 
     con = duckdb.connect()
     con.execute("PRAGMA max_temp_directory_size='30GiB'")
-    countries = ['ES','BE', 'HR', 'BG', 'PL', 'PT', 'DE', 'SE']
 
     for country_iso in countries:
         path = os.path.join(output_folder, f"{country_iso}.parquet")
@@ -113,6 +113,9 @@ def partition_db_to_country_files():
 
 def read_from_partitioned_file(country_iso: str, start:int, end:int, sectormin:int=10, sectormax:int=33) -> pd.DataFrame:
     source_file = f'/Users/curdinlieberherr/Documents/Schule/HSG/Semester/12.FS26/thesis/financials_per_country/{country_iso}.parquet'
+    if not os.path.exists(source_file):
+        print(f'Load base file for {country_iso}')
+        partition_db_to_country_files([country_iso])
     sql = f"""
         SELECT * FROM read_parquet('{source_file}')
         WHERE YEAR(closing_date) >= {start} and YEAR(closing_date) <= {end} AND TRY_CAST(LEFT(nace_code, 2) AS DOUBLE) BETWEEN {sectormin} AND {sectormax}
