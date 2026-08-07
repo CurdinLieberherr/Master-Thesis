@@ -41,6 +41,7 @@ class MisallocationAnalysis():
         self.end = end
         self.country = country
         country_iso = get_country_iso(country)
+        self.selected_sector = sector
         sectormin, sectormax = NACE_REV_2_SECTORS[sector]['range'] 
         self.fin = orbis_parquet.read_from_partitioned_file(country_iso, start=start, end=end, sectormin=sectormin, sectormax=sectormax)
         self.eurostats = eurostats.get_eurostats_data(self.country)
@@ -135,22 +136,25 @@ class MisallocationAnalysis():
         return df
     
     def _calculate_sector_weights(self):
-        # calculate weights per sector and year
+        # total VA per sector per year
         vast = self.df.groupby(['sector', 'year'])['nvad'].sum().reset_index()
-        vat = self.df.groupby(['year'])['nvad'].sum().reset_index().rename(columns={'nvad': 'nvadt'})
-        
-        # merge on years
+
+        # total VA across all sectors, per year
+        vat = self.df.groupby('year')['nvad'].sum().reset_index().rename(columns={'nvad': 'nvadt'})
+
+        # merge total onto sector-level data
         vast = pd.merge(vast, vat, how='left', on='year')
-        
-        # divide total VA per sector by total VA across all years
-        sector_totals = vast.groupby('sector')['nvad'].sum()
-        weights = (sector_totals / sector_totals.sum()).reset_index().rename(columns={'nvad': 'sectorweight'})
 
-        w_sum = weights.sectorweight.sum()
-        if round(w_sum, 6) != 1:
-            raise Exception(f'Weights of sectors do not sum to 1! They sum to: {w_sum}')
+        # weight = sector's VA share of that year's total VA
+        vast['sectorweight'] = vast['nvad'] / vast['nvadt']
 
-        return weights
+        # sanity check: weights must sum to 1 within EACH year
+        year_sums = vast.groupby('year')['sectorweight'].sum()
+        if not np.allclose(year_sums, 1):
+            bad_years = year_sums[~np.isclose(year_sums, 1)]
+            raise Exception(f'Weights do not sum to 1 for these years:\n{bad_years}')
+
+        return vast[['sector', 'year', 'sectorweight']]
 
 
 
@@ -203,7 +207,7 @@ class MisallocationAnalysis():
                             disp_TFPR=('log_TFPR', 'std')).reset_index()
 
         #merge weights with dispersion on sector and sum
-        disp = pd.merge(disp, self.sector_weights, on='sector', how='left')
+        disp = pd.merge(disp, self.sector_weights, on=['sector', 'year'], how='left')
         disp['w_disp_MRPK'] = disp['disp_MRPK'] * disp['sectorweight']
         disp['w_disp_MRPL'] = disp['disp_MRPL'] * disp['sectorweight']
         disp['w_disp_TFPR'] = disp['disp_TFPR'] * disp['sectorweight']
@@ -228,7 +232,7 @@ class MisallocationAnalysis():
                             disp_TFPR=('log_TFPR', 'std')).reset_index()
 
         #merge weights with dispersion on sector and sum
-        disp = pd.merge(disp, self.sector_weights, on='sector', how='left')
+        disp = pd.merge(disp, self.sector_weights, on=['sector', 'year'], how='left')
         disp['w_disp_MRPK'] = disp['disp_MRPK'] * disp['sectorweight']
         disp['w_disp_MRPL'] = disp['disp_MRPL'] * disp['sectorweight']
         disp['w_disp_TFPR'] = disp['disp_TFPR'] * disp['sectorweight']
@@ -280,6 +284,30 @@ class MisallocationAnalysis():
         fig, ax = plt.subplots()
         for sector, group in grouped.groupby('Labels'):
             ax.plot(group['year'], group['w_disp_rel'], label=sector)
+
+        ax.legend()
+        plt.show()
+
+        return fig
+
+
+    def plot_main_sectors_dispersion(self, n:int=5):
+        if self.selected_sector != 'X':
+            raise Exception('For this plot you need to select sector = X when initializing misallocation analysis.')
+        df = self.disp.copy()
+        sector_code_lookup = build_code_lookup(NACE_REV_2_SECTORS)
+        df['main_sector'] = df['sector'].str[:2].astype(int).map(sector_code_lookup)
+        grouped = df.groupby(['main_sector', 'year'])['w_disp_MRPK'].sum().reset_index().sort_values(['main_sector', 'year'],ascending=True)
+        grouped['w_disp_rel'] = grouped.groupby('main_sector')['w_disp_MRPK'].transform(
+            lambda x: x / x.iloc[0]
+        )
+        
+        sector_names = {key: info["description"] for key, info in NACE_REV_2_SECTORS.items()}
+        grouped['sector_name'] = grouped['main_sector'].map(sector_names)
+
+        fig, ax = plt.subplots()
+        for sector, group in grouped.groupby('sector_name'):
+            ax.plot(group['year'], group['w_disp_rel'], label=f"{group['main_sector'].min()}-{sector}")
 
         ax.legend()
         plt.show()
@@ -393,7 +421,7 @@ class MisallocationAnalysis():
         tfp_st_df = pd.concat([log_tfpe_st, log_tfp_st], axis=1)
         tfp_st_df.columns = ['log_tfpe_st', 'log_tfp_st']
         tfp_st_df = tfp_st_df.reset_index()
-        tfp_st_df = tfp_st_df.merge(self.sector_weights, on= 'sector', how='left')
+        tfp_st_df = tfp_st_df.merge(self.sector_weights, on= ['sector', 'year'], how='left')
         tfp_st_df['wlogtfpe'] = tfp_st_df['log_tfpe_st'] * tfp_st_df['sectorweight']
         tfp_st_df['wlogtfp'] = tfp_st_df['log_tfp_st'] * tfp_st_df['sectorweight']
         tfp_df = tfp_st_df.groupby('year').agg(log_tfp = ('wlogtfp', 'sum'),
@@ -485,7 +513,7 @@ class MisallocationAnalysis():
 
         cap = capgrp.merge(capcorr, on=['sector', 'year'], how='inner')
 
-        cap = cap.merge(self.sector_weights, on='sector', how='left')
+        cap = cap.merge(self.sector_weights, on=['sector', 'year'], how='left')
         cap['wstdk'] = cap['stdk'] * cap['sectorweight']
         cap['wstdZ'] = cap['stdZ'] * cap['sectorweight']
         cap['wcorr'] = cap['correlation'] * cap['sectorweight']
@@ -568,7 +596,8 @@ class MisallocationAnalysis():
         for var in vars:
             df[var] = df.groupby(['sector', 'year'])[var].transform(winsorise)
         df = df.groupby('sector')[vars].agg('std').reset_index()
-        df = pd.merge(df, self.sector_weights, on='sector', how='left')
+        weights = self.sector_weights.groupby('sector')['sectorweight'].mean().reset_index()
+        df = pd.merge(df, weights, on='sector', how='left')
         for var in vars:
             df[var] = df[var] * df['sectorweight']
         distmoments = df[vars].sum().round(2)
@@ -769,7 +798,7 @@ class MisallocationAnalysis():
                             disp_TFPR=('log_TFPR', 'std')).reset_index()
 
         #merge weights with dispersion on sector and sum
-        disp = pd.merge(disp, self.sector_weights, on='sector', how='left')
+        disp = pd.merge(disp, self.sector_weights, on=['sector', 'year'], how='left')
         disp['w_disp_MRPK'] = disp['disp_MRPK'] * disp['sectorweight']
         disp['w_disp_MRPL'] = disp['disp_MRPL'] * disp['sectorweight']
         disp['w_disp_TFPR'] = disp['disp_TFPR'] * disp['sectorweight']
@@ -854,7 +883,7 @@ class MisallocationAnalysis():
 
         #compare mean log mrpk of exiters versus non exiters per year
         vs = df.groupby(['sector', 'exiter', 'year'])['log_MRPK'].mean().reset_index()
-        vs = vs.merge(self.sector_weights, on='sector', how='left')
+        vs = vs.merge(self.sector_weights, on=['sector', 'year'], how='left')
         vs['log_MRPK'] = vs['log_MRPK']* vs['sectorweight']
         vs = vs.groupby(['exiter', 'year'])['log_MRPK'].sum().round(2).unstack(level=0)
 
@@ -933,3 +962,14 @@ def get_sector_description() -> pd.DataFrame:
     df = df.rename(columns={'NACE_R2 (Codes)': 'Codes', 'NACE_R2 (Labels)': 'Labels'})
     df['Codes'] = df['Codes'].str[1:]
     return df
+
+def build_code_lookup(sectors_dict, exclude_keys=("X",)):
+    """Expand each letter's (min, max) range into a {2-digit code: letter} dict."""
+    lookup = {}
+    for key, info in sectors_dict.items():
+        if key in exclude_keys:
+            continue  # skip aggregates like "X" that overlap everything
+        low, high = info["range"]
+        for code in range(low, high + 1):
+            lookup[code] = key
+    return lookup

@@ -60,7 +60,7 @@ def partition_db_to_country_files():
 
     con = duckdb.connect()
     con.execute("PRAGMA max_temp_directory_size='30GiB'")
-    countries = ["ES"]  # deine Länderliste
+    countries = ['ES','BE', 'HR', 'BG', 'PL', 'PT', 'DE', 'SE']
 
     for country_iso in countries:
         path = os.path.join(output_folder, f"{country_iso}.parquet")
