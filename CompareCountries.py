@@ -2,6 +2,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from MisallocationAnalysis import MisallocationAnalysis
 
+COUNTRY_STYLES = {
+    'Portugal': {'color': '#D6001C', 'marker': 'P', 'linestyle': ':'},   # flag red
+    'Spain':    {'color': '#F57C00', 'marker': 'o', 'linestyle': '-'},   # warm orange (Spain-adjacent, distinct from Portugal's red)
+    'Italy':    {'color': '#009246', 'marker': 's', 'linestyle': '--'},  # flag green
+    'Belgium':  {'color': '#F9A825', 'marker': '^', 'linestyle': '-.'},  # flag gold
+    'Sweden':   {'color': '#006AA7', 'marker': '*', 'linestyle': '-'},   # flag blue
+    'Germany':  {'color': '#1A1A1A', 'marker': 'p', 'linestyle': '--'},  # flag black
+}
+
 class CompareCountries:
     def __init__(self, countries: list[MisallocationAnalysis], start: int = None, end: int= None):
         self.countries = countries
@@ -71,13 +80,19 @@ class CompareCountries:
             base = series.iloc[0]
             relative = (series - base) / base * 100
 
-            ax.plot(relative.index, relative.values, label=country.country, linewidth=2)
+            color = COUNTRY_STYLES.get(country.country)['color']
+            linestyle = COUNTRY_STYLES.get(country.country)['linestyle']
+            ax.plot(relative.index, relative.values, label=country.country, color=color, linestyle=linestyle, linewidth=2)
 
         ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
         ax.set_title("Relative Growth of MRPK Dispersion (Start Year = 0%)")
         ax.set_xlabel("Year")
         ax.set_ylabel("% Change from Start Year")
-        ax.legend()
+
+        # dedupe legend in case the same country is plotted more than once (e.g. two periods)
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        ax.legend(by_label.values(), by_label.keys())
         plt.tight_layout()
         plt.show()
 
