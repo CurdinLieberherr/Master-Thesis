@@ -54,6 +54,7 @@ class MisallocationAnalysis():
         self.dispt_sector = self._dispersion_per_sector()
         self.tfpdf = self._estimate_productivity()
         self.cap_moments = self._capital_moments()
+        self.estimate_all_moments()
 
     def _main_df(self) -> pd.DataFrame:
 
@@ -82,7 +83,6 @@ class MisallocationAnalysis():
             namedict['netfirmvalue'] = 'netfirmvalue'
             namedict['long_term_debt'] = 'debt'
 
-
         df['year'] = df['closing_date'].dt.year.astype(str)
         df = df.rename(columns=namedict)
         df = df[namedict.values()]
@@ -99,7 +99,6 @@ class MisallocationAnalysis():
         df = df[df['priceind'].notna()]
         df = df[df['capitalprice'].notna()]
 
-        #calculate base variables
 
         #deflate assets and wagebill to get k and l with pricindex
         df['k'] = df['assets'] / df['capitalprice']   
@@ -108,32 +107,42 @@ class MisallocationAnalysis():
 
         #calculate firm nominal value added as y
         df['nvad'] = df['revenue'] - df['materials']
-
-        if 'wagebill' in df.columns:
-            df['l'] = df['wagebill'] / df['priceind']
-            df['w'] = (df['wagebill'] / df['nEmployees']) / df['priceind']
-        else:
-            df['w'] = df['wage'] / df['priceind']
-
+        df['l'] = df['wagebill'] / df['priceind']
+        df['w'] = (df['wagebill'] / df['nEmployees']) / df['priceind']
+        df['a'] = df['netfirmvalue'] / df['priceind']
+        df['b'] = df['debt'] / df['capitalprice']
+      
         #drop non positive values and prices
         df = df[df['k'] > 0]
         df = df[df['w'] > 0]
         df = df[df['nvad'] > 0]
         df = df[df['revenue'] > 0]
         df = df[df['materials'] > 0]
-
-        if 'netfirmvalue' in df.columns:
-            df['a'] = df['netfirmvalue'] / df['priceind']
-            df = df[df['netfirmvalue'] > 0]
-            df = df[df['a'] > 0]
-
-            df['b'] = df['debt'] / df['capitalprice']
-            df[df['b'] >= 0]
+        df = df[(df['debt'] >= 0) | (df['debt'].isna())]
+        df = df[df['netfirmvalue'] > 0]
+        df = df[df['a'] > 0]
+        df[df['b'] >= 0]
 
         #add real interest rate
         df = df.merge(self.realrate.df[['year', 'realinterestrate']], on='year', how='left')
 
         return df
+
+    #calculate revenue distribution per firm size
+    def revenue_per_firm_size(self):
+        df = self.df.copy()
+        df['size_category'] = np.where(
+            df['nEmployees'] < 20, '0-19 employees', pd.NA
+        )
+        df['size_category'] = np.where(
+                    (df['nEmployees'] > 19) & (df['nEmployees'] < 250), '20-249 employees', df['size_category']
+        )
+        df['size_category'] = np.where(
+                            df['nEmployees'] > 250, '250+ employees', df['size_category']
+        )
+        grouped = df.groupby('size_category')['revenue'].sum()
+        grouped = grouped / df['revenue'].sum()
+        return grouped.round
     
     def _calculate_sector_weights(self):
         # total VA per sector per year
@@ -198,7 +207,7 @@ class MisallocationAnalysis():
         df['log_TFPR'] = np.log(df['TFPR'])
 
         for var in ['log_MRPK', 'log_MRPL', 'log_TFPR']:
-            df[var] = df.groupby(['sector', 'year'])[var].transform(winsorise)
+            df[var] = winsorise(df[var])
 
         #group by sector, year and take std
         disp = df.groupby(['sector', 'year']).agg(
@@ -314,28 +323,55 @@ class MisallocationAnalysis():
 
         return fig
 
-
-
-    def plot_dispersion(self, figsize = (8,6)):
+    def plot_dispersion(self, variables: Literal['MRPK', 'MRPL', 'both'] = 'MRPK', figsize=(8, 6), show=True):
         plotdf = self.dispt.copy()
-        plotdf = plotdf / plotdf.iloc[0]
+        plotdf = plotdf / plotdf.iloc[0] -1
         plotdf = plotdf.reset_index()
 
-        #create plot 
+        # create plot
         fig, ax1 = plt.subplots(figsize=figsize)
 
-        ax1.plot(plotdf["year"], plotdf["w_disp_MRPK"], label="MRPK", color="#1f77b4", linewidth=2)
-        ax1.plot(plotdf["year"], plotdf["w_disp_MRPL"], label="MRPL", color="#d62728", linewidth=2)
-        ax1.set_title(f"{self.country} - Dispersion of MRPK and MRPL. {plotdf['year'][0]} = 1")
+        if variables in ['MRPK', 'both']:
+            ax1.plot(plotdf["year"], plotdf["w_disp_MRPK"], label="MRPK", color="#1f77b4", linewidth=2)
+        if variables in ['MRPL', 'both']:
+            ax1.plot(plotdf["year"], plotdf["w_disp_MRPL"], label="MRPL", color="#d62728", linewidth=2)
+
+        # dynamic title based on which variable(s) are plotted
+        title_map = {
+            'MRPK': 'log MRPK Dispersion',
+            'MRPL': 'log MRPL Dispersion',
+            'both': 'log MRPK and log MRPL Dispersion'
+        }
+        ax1.set_title(f"{self.country} - {title_map[variables]}")
+
         ax1.set_xlabel("Year")
-        ax1.set_ylabel("Standard Deviation")
+        ax1.set_ylabel(f"Disp {title_map[variables]} (Growth, {plotdf['year'][0]} = 0)")
         ax1.legend()
 
         plt.tight_layout()
+        if show:
+            plt.show()
+
+        return fig
+
+    def plot_dispersion_productivity(self, variables: Literal['MRPK', 'MRPL', 'both'] = 'MRPK', figsize=(6, 4)):
+        plotdf = self.tfpdf.copy()
+        plotdf = plotdf / plotdf.iloc[0] -1
+        plotdf = plotdf.reset_index()
+
+        fig = self.plot_dispersion(variables=variables, figsize=figsize, show=False)
+        ax = fig.axes[0]  # grab the first (or only) axes in the figure
+        ax.plot(plotdf["year"], plotdf["log_tfp"], label="TFP", color="green", linewidth=2)
+        ax.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
+        ax.legend()
+        current_title = ax.get_title()
+        ax.set_title(f"{current_title} and log TFP Growth")
+        ax.set_ylabel(f'Growth, {plotdf['year'][0]} = 0')
         plt.show()
 
         return fig
-        
+
+    
     def plot_histogram_firm_size(self, figsize = (8,6)):
         df = self.df[['year', 'k']].copy()
 
@@ -594,7 +630,7 @@ class MisallocationAnalysis():
         df = self.df.copy()[['sector', 'year'] + vars]
         df[vars] = np.log(df[vars])
         for var in vars:
-            df[var] = df.groupby(['sector', 'year'])[var].transform(winsorise)
+            df[var] = winsorise(df[var])
         df = df.groupby('sector')[vars].agg('std').reset_index()
         weights = self.sector_weights.groupby('sector')['sectorweight'].mean().reset_index()
         df = pd.merge(df, weights, on='sector', how='left')
@@ -789,7 +825,7 @@ class MisallocationAnalysis():
     def _recalculate_correct_dispersion(self):
         df = self.df.copy()
         for var in ['log_MRPK', 'log_MRPL', 'log_TFPR']:
-            df[var] = df.groupby(['sector', 'year'])[var].transform(winsorise)
+            df[var] = winsorise(df[var])
 
         #group by sector, year and take std
         disp = df.groupby(['sector', 'year']).agg(
@@ -939,7 +975,28 @@ class MisallocationAnalysis():
 
         return fig
 
+    def overview_statistics(self):
+        period = f"{self.start} - {self.end}"
+        avg_firmcount = self.df.groupby('year')['FirmName'].count().mean()
+        avg_revenue_coverage = self.compare_df_eurostats()['Turnover'].mean() 
+        top20share = self.distributional_moments.loc['Top 20% Share of k']
+        sector = NACE_REV_2_SECTORS.get(self.selected_sector)['description']
 
+        return pd.DataFrame([{'Country': self.country, 'Period': period, 'Sector': sector, 'Avg. n. Firms': avg_firmcount, 'Avg. Revenue Covered': avg_revenue_coverage, 'Top 20% Share of Capital': top20share}]).round(2)
+
+    def descriptive_statistics(self):
+        AMOUNTCOLS = ['assets','revenue','materials','wagebill','debt']
+        df = self.df[AMOUNTCOLS + ['nEmployees']].copy()
+        for col in AMOUNTCOLS:
+            df[col] = df[col] / 1000
+        df = df.describe().round(2).T
+        df['Country'] = self.country
+        df['Period'] = f"{self.start}-{self.end}"
+        df['Sector'] = NACE_REV_2_SECTORS.get(self.selected_sector)['description']
+        additional = ['Country', 'Period', 'Sector']
+        other_cols = [c for c in df.columns if c not in additional]
+        df = df[additional + other_cols]
+        return df.reset_index(names='Variables')
 
 
     

@@ -53,8 +53,8 @@ class CompareCountries:
             mrpk_total_decrease = pct_diffs[pct_diffs < 0].sum().round(2)
             mrpk_net_change = pct_diffs.sum().round(2)
             #get moments data
-            networth_on_capital_growth = country.within_firm_moments.coefs.loc['Coefficient of log_a on firm capital growth', 'parameter']
-            significance = country.within_firm_moments.coefs.loc['Coefficient of log_a on firm capital growth', 'pvalue']
+            networth_on_capital_growth = country.within_firm_moments.coefs.loc['Coef log_a on capital growth', 'parameter']
+            significance = country.within_firm_moments.coefs.loc['Coef log_a on capital growth', 'pvalue']
 
             data.append([country.country,year_range, orbis_turnover_mean, 
                         rr_net_change, rr_total_increase, rr_total_decrease,
@@ -64,7 +64,7 @@ class CompareCountries:
         return pd.DataFrame(data, columns=['Country', 'Time', 'Revenue Data Coverage %',
                                             'Change Real Interest Rate %', 'Increase in Real Interest Rate %', 'Decrease in Real Interest Rate %',
                                               'Change log MRPK %', 'Increase in MRPK %', 'Decrease in MRPK %', 
-                                              'Coefficient of log_a on firm capital growth', 'P-Value Coefficient'])
+                                              'Coef log_a on capital growth', 'P-Value Coefficient'])
     
     def plot_compare_mrpk(self, figsize=(12, 6)):
         fig, ax = plt.subplots(figsize=figsize)
@@ -84,6 +84,15 @@ class CompareCountries:
             linestyle = COUNTRY_STYLES.get(country.country)['linestyle']
             ax.plot(relative.index, relative.values, label=country.country, color=color, linestyle=linestyle, linewidth=2)
 
+        #find start years
+        startyears = []
+        for country in self.countries:
+            if country.start not in startyears:
+                startyears.append(country.start)
+        #add vertical line
+        for i,year in enumerate(startyears):
+            ax.axvline(year, color='grey', linewidth=0.8, linestyle='--')
+            ax.text(year, ax.get_ylim()[1], f'Period {i+1}', ha='center', va='bottom')
         ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
         ax.set_title("Relative Growth of MRPK Dispersion (Start Year = 0%)")
         ax.set_xlabel("Year")
@@ -93,10 +102,38 @@ class CompareCountries:
         handles, labels = ax.get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
         ax.legend(by_label.values(), by_label.keys())
+        ax.margins(x=0.05, y=0.1)  
         plt.tight_layout()
         plt.show()
 
         return fig
+
+    def compare_all_moments(self) -> pd.DataFrame:
+        df = pd.DataFrame()
+
+        for country in self.countries:
+            moments = country.all_moments
+            moments.name = country.country + f" {country.start}-{country.end}"
+            df = pd.concat([df,moments], axis=1)
+
+        return df
+
+    def overview_statistics(self):
+        df = pd.DataFrame()
+        for country in self.countries:
+            df = pd.concat([df, country.overview_statistics()], axis=0, ignore_index=True)
+
+        return df
+
+    def descriptive_statistics(self):
+        df = pd.DataFrame()
+        for country in self.countries:
+            stats = country.descriptive_statistics()
+            df = pd.concat([df, stats], axis=0, ignore_index=True)
+
+        return df
+
+        
             
 
 
