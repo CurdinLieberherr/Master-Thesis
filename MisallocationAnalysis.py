@@ -49,6 +49,7 @@ class MisallocationAnalysis():
         self.capi = prices.capital_prices(self.country)
         self.realrate = RealRate.RealRate(self.country)
         self.df = self._main_df()
+        self.win_df = self._win_df()
         self.sector_weights = self._calculate_sector_weights()
         self.dispt, self.disp = self._calculate_dispersion()
         self.dispt_sector = self._dispersion_per_sector()
@@ -128,6 +129,14 @@ class MisallocationAnalysis():
 
         return df
 
+    def _win_df(self) -> pd.DataFrame:
+        df = self.df.copy()
+        vars = ['k', 'w', 'nvad', 'revenue', 'materials', 'debt', 'netfirmvalue', 'wagebill', 'a', 'b']
+        for var in vars:
+            df[var] = winsorise(df[var])
+
+        return df
+
     #calculate revenue distribution per firm size
     def revenue_per_firm_size(self):
         df = self.df.copy()
@@ -190,7 +199,7 @@ class MisallocationAnalysis():
         markup = 1
 
         if df is None:
-            df = self.df
+            df = self.win_df
 
         # see gopinath p. 1926
         #calculate mrpk
@@ -205,9 +214,6 @@ class MisallocationAnalysis():
         df['log_MRPK'] = np.log(df['MRPK'])
         df['log_MRPL'] = np.log(df['MRPL'])
         df['log_TFPR'] = np.log(df['TFPR'])
-
-        for var in ['log_MRPK', 'log_MRPL', 'log_TFPR']:
-            df[var] = winsorise(df[var])
 
         #group by sector, year and take std
         disp = df.groupby(['sector', 'year']).agg(
@@ -227,7 +233,7 @@ class MisallocationAnalysis():
         return dispt, disp
     
     def _estimate_disp_large_firms(self, top:float = 0.05):
-        df = self.df.copy()
+        df = self.win_df.copy()
 
         df['top5pct'] = df.groupby(['sector','year'])['k'].transform(
         lambda x: x >= x.quantile(1-top)
@@ -378,7 +384,7 @@ class MisallocationAnalysis():
         years = sorted(df['year'].unique())
         colors = cm.viridis(np.linspace(0, 1, len(years)))  # or plt.cm.plasma, cm.turbo, cm.coolwarm
 
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=figsize)
         for year, color in zip(years, colors):
             subset = df.loc[df['year'] == year, 'k']
             ax.hist(np.log(subset), bins=40, alpha=0.5, label=str(year), density=True, color=color)
@@ -438,16 +444,16 @@ class MisallocationAnalysis():
         alpha = 0.35
 
         #calculate sectorrevenue and merge to df
-        sectorrevenue = self.df.groupby(['year', 'sector']).agg(nvad_s = ('nvad', 'sum')).reset_index()
-        self.df = self.df.merge(sectorrevenue, on=['year', 'sector'], how='left')
+        sectorrevenue = self.win_df.groupby(['year', 'sector']).agg(nvad_s = ('nvad', 'sum')).reset_index()
+        self.win_df = self.win_df.merge(sectorrevenue, on=['year', 'sector'], how='left')
 
         #calculate firm productivity
-        self.df['Z'] = ((self.df['nvad_s']**(-(1/(EPSILON-1)))) / self.df['priceind'] ) * ( (self.df['nvad']**(EPSILON/(EPSILON-1))) / ( (self.df['k']**alpha) * self.df['l']**(1-alpha)) )
-        self.df['Z_pow'] = self.df['Z'] ** (EPSILON - 1)
+        self.win_df['Z'] = ((self.win_df['nvad_s']**(-(1/(EPSILON-1)))) / self.win_df['priceind'] ) * ( (self.win_df['nvad']**(EPSILON/(EPSILON-1))) / ( (self.win_df['k']**alpha) * self.win_df['l']**(1-alpha)) )
+        self.win_df['Z_pow'] = self.win_df['Z'] ** (EPSILON - 1)
 
     
         #df groupby sector and year
-        sdf = self.df.groupby(['year', 'sector'])
+        sdf = self.win_df.groupby(['year', 'sector'])
         #calcualte log tfpe and tfp per year and sector by the formulas above
         log_tfpe_st =   ((1/(EPSILON-1)) 
                     * (np.log(sdf['FirmName'].count()) + np.log(sdf['Z_pow'].mean()) )
@@ -536,7 +542,7 @@ class MisallocationAnalysis():
         return fig
     
     def _capital_moments(self):
-        cap = self.df.copy()
+        cap = self.win_df.copy()
 
         cap['k'] = np.log(cap['k'])
         cap['Z'] = np.log(cap['Z'])
@@ -578,7 +584,7 @@ class MisallocationAnalysis():
     
     def plot_capital_wedges(self, figsize = (10,4)):
         DELTA = 0.1
-        df = self.df.copy()
+        df = self.win_df.copy()
         df['log_tau_k'] = np.log(df['w']) + df['log_MRPK'] - np.log(df['realinterestrate'] + DELTA) - df['log_MRPL']
 
         # ── Assign groups: bottom 50% vs top 10% ────────────────────────
@@ -627,7 +633,7 @@ class MisallocationAnalysis():
     
     def estimate_distributional_moments(self):
         vars = ['Z_pow', 'k', 'l']
-        df = self.df.copy()[['sector', 'year'] + vars]
+        df = self.win_df.copy()[['sector', 'year'] + vars]
         df[vars] = np.log(df[vars])
         for var in vars:
             df[var] = winsorise(df[var])
@@ -648,16 +654,16 @@ class MisallocationAnalysis():
             return pd.Series(result)
 
         cols = ['l', 'k']
-        result = self.df.copy().groupby('year').apply(lambda g: top20_share(g, cols))[cols].mean().round(2)
+        result = self.win_df.copy().groupby('year').apply(lambda g: top20_share(g, cols))[cols].mean().round(2)
         result.index = [f'Top 20% Share of {var}' for var in cols]
 
         self.distributional_moments = pd.concat([distmoments,result], axis=0)
 
     def estimate_within_firm_moments(self):
-        self.within_firm_moments = WithinFirmMoments.WithinFirmMoments(self.df)
+        self.within_firm_moments = WithinFirmMoments.WithinFirmMoments(self.win_df)
 
     def estimate_cross_sectional_moments(self):
-        df = self.df.copy()
+        df = self.win_df.copy()
 
         #calculate borrower share
         borrower_share = (df['b'] > 0).mean()
@@ -697,7 +703,7 @@ class MisallocationAnalysis():
         return all
     
     def estimate_corrected_measures(self):
-        df = self.df.copy()
+        df = self.win_df.copy()
         print(len(df))
         df = df.sort_values(['FirmName', 'year'])
 
@@ -802,7 +808,7 @@ class MisallocationAnalysis():
         self.corrected_measures = df[['FirmName', 'year', 'corrected MRPK', 'corrected MRPL']]
 
     def plot_correct_measures(self, measure: Literal['MRPK', 'MRPL']):
-        df = self.df.merge(self.corrected_measures, on=['FirmName', 'year'], how='right')
+        df = self.win_df.merge(self.corrected_measures, on=['FirmName', 'year'], how='right')
 
         VARS = [f'log_{measure}',f'corrected {measure}']
         plotdf = df[VARS + ['nvad',  'year']].copy()
@@ -823,7 +829,7 @@ class MisallocationAnalysis():
         return fig
     
     def _recalculate_correct_dispersion(self):
-        df = self.df.copy()
+        df = self.win_df.copy()
         for var in ['log_MRPK', 'log_MRPL', 'log_TFPR']:
             df[var] = winsorise(df[var])
 
@@ -846,27 +852,27 @@ class MisallocationAnalysis():
     
     
     def inplace_correct_measures(self):
-        self.df = self.df.merge(self.corrected_measures, on=['FirmName', 'year'], how='right')
+        self.win_df = self.win_df.merge(self.corrected_measures, on=['FirmName', 'year'], how='right')
 
-        self.df['log_MRPK'] = self.df['corrected MRPK']
-        self.df['log_MRPL'] = self.df['corrected MRPL']
-        self.df['MRPK'] = np.exp(self.df['corrected MRPK'])
-        self.df['MRPL'] = np.exp(self.df['corrected MRPL'])
+        self.win_df['log_MRPK'] = self.win_df['corrected MRPK']
+        self.win_df['log_MRPL'] = self.win_df['corrected MRPL']
+        self.win_df['MRPK'] = np.exp(self.win_df['corrected MRPK'])
+        self.win_df['MRPL'] = np.exp(self.win_df['corrected MRPL'])
 
         alpha = 0.35
         mu = 1
 
-        self.df['log_TFPR'] = (
+        self.win_df['log_TFPR'] = (
             np.log(mu)
-            + alpha * (self.df['log_MRPK'] - np.log(alpha))
-            + (1 - alpha) * (self.df['log_MRPL'] - np.log(1 - alpha))
+            + alpha * (self.win_df['log_MRPK'] - np.log(alpha))
+            + (1 - alpha) * (self.win_df['log_MRPL'] - np.log(1 - alpha))
         )
-        self.df['TFPR'] = np.exp(self.df['log_TFPR'])
+        self.win_df['TFPR'] = np.exp(self.win_df['log_TFPR'])
 
         self.dispt, self.disp = self._recalculate_correct_dispersion()
 
     def exiters_regression(self):
-        df = self.df.copy()
+        df = self.win_df.copy()
         # ── Classify firms ───────────────────────────────────────────────
         last_year = df['year'].max()
 
@@ -906,7 +912,7 @@ class MisallocationAnalysis():
         return summary_df.loc[['log_Z', 'log_a']].round(3), model
 
     def plot_mrpk_exiters_vs_remainers(self):
-        df = self.df.copy()
+        df = self.win_df.copy()
 
         # Each firm's true last observed year
         last_obs = df.groupby('FirmName')['year'].max().rename('last_year')
@@ -935,7 +941,7 @@ class MisallocationAnalysis():
         return fig1
 
     def plot_dispersion_all_vs_survivors(self):
-        df = self.df.copy()
+        df = self.win_df.copy()
 
         # Each firm's true last observed year
         last_obs = df.groupby('FirmName')['year'].max().rename('last_year')
