@@ -51,6 +51,7 @@ class MisallocationAnalysis():
         self.df = self._main_df()
         self.win_df = self._win_df()
         self.sector_weights = self._calculate_sector_weights()
+        self.time_invariant_weights = self._calculate_sector_weights(True)
         self.dispt, self.disp = self._calculate_dispersion()
         self.dispt_sector = self._dispersion_per_sector()
         self.tfpdf = self._estimate_productivity()
@@ -103,11 +104,10 @@ class MisallocationAnalysis():
 
         #deflate assets and wagebill to get k and l with pricindex
         df['k'] = df['assets'] / df['capitalprice']   
-        df['revenue'] = df['revenue'] / df['priceind']
-        df['materials'] = df['materials'] / df['priceind']
-
-        #calculate firm nominal value added as y
         df['nvad'] = df['revenue'] - df['materials']
+
+        #deflate values
+        df['y'] = df['nvad'] / df['priceind']
         df['l'] = df['wagebill'] / df['priceind']
         df['w'] = (df['wagebill'] / df['nEmployees']) / df['priceind']
         df['a'] = df['netfirmvalue'] / df['priceind']
@@ -153,7 +153,7 @@ class MisallocationAnalysis():
         grouped = grouped / df['revenue'].sum()
         return grouped.round
     
-    def _calculate_sector_weights(self):
+    def _calculate_sector_weights(self, time_invariant = False):
         # total VA per sector per year
         vast = self.df.groupby(['sector', 'year'])['nvad'].sum().reset_index()
 
@@ -172,9 +172,18 @@ class MisallocationAnalysis():
             bad_years = year_sums[~np.isclose(year_sums, 1)]
             raise Exception(f'Weights do not sum to 1 for these years:\n{bad_years}')
 
+        if time_invariant:
+            # --- build time-invariant sector weights ---
+            # average each sector's weight across all years to get a single fixed weight per sector
+            time_invariant_weights = (
+                vast
+                .groupby('sector')['sectorweight']
+                .mean()
+                .reset_index()
+            )
+            return time_invariant_weights
+
         return vast[['sector', 'year', 'sectorweight']]
-
-
 
     def compare_df_eurostats(self) -> pd.DataFrame:
         #get infos of companies per year
@@ -222,7 +231,7 @@ class MisallocationAnalysis():
                             disp_TFPR=('log_TFPR', 'std')).reset_index()
 
         #merge weights with dispersion on sector and sum
-        disp = pd.merge(disp, self.sector_weights, on=['sector', 'year'], how='left')
+        disp = pd.merge(disp, self.time_invariant_weights, on='sector', how='left')
         disp['w_disp_MRPK'] = disp['disp_MRPK'] * disp['sectorweight']
         disp['w_disp_MRPL'] = disp['disp_MRPL'] * disp['sectorweight']
         disp['w_disp_TFPR'] = disp['disp_TFPR'] * disp['sectorweight']
@@ -247,7 +256,7 @@ class MisallocationAnalysis():
                             disp_TFPR=('log_TFPR', 'std')).reset_index()
 
         #merge weights with dispersion on sector and sum
-        disp = pd.merge(disp, self.sector_weights, on=['sector', 'year'], how='left')
+        disp = pd.merge(disp, self.time_invariant_weights, on='sector', how='left')
         disp['w_disp_MRPK'] = disp['disp_MRPK'] * disp['sectorweight']
         disp['w_disp_MRPL'] = disp['disp_MRPL'] * disp['sectorweight']
         disp['w_disp_TFPR'] = disp['disp_TFPR'] * disp['sectorweight']
@@ -448,26 +457,35 @@ class MisallocationAnalysis():
         self.win_df = self.win_df.merge(sectorrevenue, on=['year', 'sector'], how='left')
 
         #calculate firm productivity
-        self.win_df['Z'] = ((self.win_df['nvad_s']**(-(1/(EPSILON-1)))) / self.win_df['priceind'] ) * ( (self.win_df['nvad']**(EPSILON/(EPSILON-1))) / ( (self.win_df['k']**alpha) * self.win_df['l']**(1-alpha)) )
+        self.win_df['Z'] = (
+            (self.win_df['nvad_s']**(-1/(EPSILON-1)) / self.win_df['priceind'])
+        ) * (
+            (self.win_df['nvad']**(EPSILON/(EPSILON-1))) 
+            / ((self.win_df['k']**alpha) * (self.win_df['l']**(1-alpha)))
+        )
         self.win_df['Z_pow'] = self.win_df['Z'] ** (EPSILON - 1)
 
     
-        #df groupby sector and year
+        # df groupby sector and year
         sdf = self.win_df.groupby(['year', 'sector'])
-        #calcualte log tfpe and tfp per year and sector by the formulas above
-        log_tfpe_st =   ((1/(EPSILON-1)) 
-                    * (np.log(sdf['FirmName'].count()) + np.log(sdf['Z_pow'].mean()) )
+
+        # calculate log tfpe and tfp per year and sector by the formulas above
+        log_tfpe_st = ((1/(EPSILON-1)) 
+                    * (np.log(sdf['FirmName'].count()) + np.log(sdf['Z_pow'].mean()))
                     )
-        log_tfp_st = np.log(sdf['nvad'].sum()) - alpha * np.log(sdf['k'].sum()) - (1-alpha) * np.log(sdf['l'].sum())
-        #multiply with the sectorweights and sum to get tfp and tfpe per year
+        log_tfp_st = np.log(sdf['y'].sum()) - (alpha * np.log(sdf['k'].sum())) - ((1-alpha) * np.log(sdf['l'].sum()))
+
         tfp_st_df = pd.concat([log_tfpe_st, log_tfp_st], axis=1)
         tfp_st_df.columns = ['log_tfpe_st', 'log_tfp_st']
         tfp_st_df = tfp_st_df.reset_index()
-        tfp_st_df = tfp_st_df.merge(self.sector_weights, on= ['sector', 'year'], how='left')
+        tfp_st_df = tfp_st_df.merge(self.time_invariant_weights, on='sector', how='left')
         tfp_st_df['wlogtfpe'] = tfp_st_df['log_tfpe_st'] * tfp_st_df['sectorweight']
         tfp_st_df['wlogtfp'] = tfp_st_df['log_tfp_st'] * tfp_st_df['sectorweight']
-        tfp_df = tfp_st_df.groupby('year').agg(log_tfp = ('wlogtfp', 'sum'),
-                                            log_tfpe = ('wlogtfpe', 'sum'))
+
+        tfp_df = tfp_st_df.groupby('year').agg(
+            log_tfp=('wlogtfp', 'sum'),
+            log_tfpe=('wlogtfpe', 'sum')
+        )
         #add a 1% growth tfp
         tfp_df['log_tfpg'] = tfp_df['log_tfp'].iloc[0] + np.log(1.01) * np.arange(len(tfp_df))
 
@@ -555,7 +573,7 @@ class MisallocationAnalysis():
 
         cap = capgrp.merge(capcorr, on=['sector', 'year'], how='inner')
 
-        cap = cap.merge(self.sector_weights, on=['sector', 'year'], how='left')
+        cap = cap.merge(self.time_invariant_weights, on='sector', how='left')
         cap['wstdk'] = cap['stdk'] * cap['sectorweight']
         cap['wstdZ'] = cap['stdZ'] * cap['sectorweight']
         cap['wcorr'] = cap['correlation'] * cap['sectorweight']
@@ -638,8 +656,7 @@ class MisallocationAnalysis():
         for var in vars:
             df[var] = winsorise(df[var])
         df = df.groupby('sector')[vars].agg('std').reset_index()
-        weights = self.sector_weights.groupby('sector')['sectorweight'].mean().reset_index()
-        df = pd.merge(df, weights, on='sector', how='left')
+        df = pd.merge(df, self.time_invariant_weights, on='sector', how='left')
         for var in vars:
             df[var] = df[var] * df['sectorweight']
         distmoments = df[vars].sum().round(2)
@@ -840,7 +857,7 @@ class MisallocationAnalysis():
                             disp_TFPR=('log_TFPR', 'std')).reset_index()
 
         #merge weights with dispersion on sector and sum
-        disp = pd.merge(disp, self.sector_weights, on=['sector', 'year'], how='left')
+        disp = pd.merge(disp, self.time_invariant_weights, on='sector', how='left')
         disp['w_disp_MRPK'] = disp['disp_MRPK'] * disp['sectorweight']
         disp['w_disp_MRPL'] = disp['disp_MRPL'] * disp['sectorweight']
         disp['w_disp_TFPR'] = disp['disp_TFPR'] * disp['sectorweight']
@@ -925,7 +942,7 @@ class MisallocationAnalysis():
 
         #compare mean log mrpk of exiters versus non exiters per year
         vs = df.groupby(['sector', 'exiter', 'year'])['log_MRPK'].mean().reset_index()
-        vs = vs.merge(self.sector_weights, on=['sector', 'year'], how='left')
+        vs = vs.merge(self.time_invariant_weights, on='sector', how='left')
         vs['log_MRPK'] = vs['log_MRPK']* vs['sectorweight']
         vs = vs.groupby(['exiter', 'year'])['log_MRPK'].sum().round(2).unstack(level=0)
 
