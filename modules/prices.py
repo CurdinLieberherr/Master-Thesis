@@ -5,7 +5,7 @@ warnings.filterwarnings('ignore')
 
 def capital_prices(country: str):
     #capital prices eurostat
-    file = "/Users/curdinlieberherr/Library/Mobile Documents/com~apple~CloudDocs/Uni/26 FS/Thesis/Data Work/Data/EU Capital Prices Eurostat 2021 = 100.xlsx"
+    file = "Data/EU Capital Prices Eurostat 2021 = 100.xlsx"
     capi = pd.read_excel(file, sheet_name='Sheet 1', header=10)
     capi['country'] = capi.iloc[:,0]
     NUMCOLS = [str(year) for year in range(1992, 2026)]
@@ -26,7 +26,7 @@ def capital_prices(country: str):
 
 def price_indexes(country: str):
     #read data and set header names
-    file = '/Users/curdinlieberherr/Library/Mobile Documents/com~apple~CloudDocs/Uni/26 FS/Thesis/Data Work/Data/EU Producer Prices Country Sector 1992 - 2025 2021=100.xlsx'
+    file = 'Data/EU Producer Prices Country Sector 1992 - 2025 2021=100.xlsx'
     df = pd.read_excel(file, sheet_name='Sheet 1', header=9)
     df = df.iloc[2:, :]
     df['country'] = df.iloc[:,0]

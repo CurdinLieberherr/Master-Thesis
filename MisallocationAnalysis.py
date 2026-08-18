@@ -1037,7 +1037,7 @@ def get_country_iso(name):
 
 
 def get_sector_description() -> pd.DataFrame:
-    file = '/Users/curdinlieberherr/Library/Mobile Documents/com~apple~CloudDocs/Uni/26 FS/Thesis/Data Work/Data/EU Producer Prices Country Sector 1992 - 2025 2021=100.xlsx'
+    file = 'Data/EU Producer Prices Country Sector 1992 - 2025 2021=100.xlsx'
     df = pd.read_excel(file, header=10, dtype=str)[['NACE_R2 (Codes)', 'NACE_R2 (Labels)']].drop_duplicates()
     df = df.rename(columns={'NACE_R2 (Codes)': 'Codes', 'NACE_R2 (Labels)': 'Labels'})
     df['Codes'] = df['Codes'].str[1:]
