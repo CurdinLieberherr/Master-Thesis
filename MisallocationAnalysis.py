@@ -562,26 +562,17 @@ class MisallocationAnalysis():
     def _capital_moments(self):
         cap = self.win_df.copy()
 
-        cap['k'] = np.log(cap['k'])
-        cap['Z'] = np.log(cap['Z'])
+        cap['log_k'] = np.log(cap['k'])
+        cap['log_Z'] = np.log(cap['Z'])
 
-        capgrp = cap.groupby(['sector', 'year']).agg(
-            stdk = ('k', 'std'),
-            stdZ = ('Z', 'std')).reset_index()
+        # Cross-sectional correlation and std — pooled across all firms per year
+        cap_year = cap.groupby('year').apply(lambda g: pd.Series({
+            'corr_Z_k': g['log_k'].corr(g['log_Z']),
+            'std_k':    g['log_k'].std(),
+            'std_Z':    g['log_Z'].std(),
+        })).reset_index()
 
-        capcorr = cap.groupby(['sector', 'year']).apply(lambda g: g['k'].corr(g['Z'])).to_frame('correlation').reset_index()
-
-        cap = capgrp.merge(capcorr, on=['sector', 'year'], how='inner')
-
-        cap = cap.merge(self.time_invariant_weights, on='sector', how='left')
-        cap['wstdk'] = cap['stdk'] * cap['sectorweight']
-        cap['wstdZ'] = cap['stdZ'] * cap['sectorweight']
-        cap['wcorr'] = cap['correlation'] * cap['sectorweight']
-
-        cap = cap.groupby('year').agg(corr = ('wcorr', 'sum'),
-                                stdK = ('wstdk', 'sum'))
-        
-        return cap
+        return cap_year
 
     
     def plot_capital_tfp_moments(self, figsize = (10,4)):
@@ -590,9 +581,9 @@ class MisallocationAnalysis():
 
         fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=figsize)
 
-        ax1.plot(cap.index, cap['stdK'])
+        ax1.plot(cap['year'], cap['std_k'])
         ax1.set_ylabel('Standard Deviation of log(k)')
-        ax2.plot(cap.index, cap['corr'])
+        ax2.plot(cap['year'], cap['corr_Z_k'])
         ax2.set_ylabel('Correlation of log(k) with log(Z)')
 
         plt.tight_layout()
