@@ -3,11 +3,6 @@ from linearmodels.panel import PanelOLS
 import numpy as np
 from typing import Literal
 
-#winsorize function to drop the stupid ones
-def winsorise(s, lower=0.001, upper=0.999):
-    lo, hi = s.quantile([lower, upper])
-    return s.clip(lo, hi)
-
 class WithinFirmMoments():
     def __init__(self, data: pd.DataFrame):
         self.capital_growth_regr, self.capital_growth_coefs = firm_capital_debt_regression(data, 'capital growth')
@@ -53,10 +48,6 @@ def firm_capital_debt_regression(data: pd.DataFrame,
         df['log_k'] = np.log(df['k'])
     else:
         raise Exception('Enter valid dependent variable!')
-
-    #winsorize to remove outliers
-    for var in ['dep_var', 'log_Z', 'log_a', 'log_k']:
-        df[var] = df.groupby('year')[var].transform(winsorise)
 
     # Sector-year fixed effect grouping variable
     df['sector_year'] = df['sector'].astype(str) + "_" + df['year'].astype(str)

@@ -37,6 +37,9 @@ NaceSection = Literal["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"
 
 class MisallocationAnalysis():
     def __init__(self, country: str, start:int = 2015, end:int=2024, sector:NaceSection = "C"):
+        self.alpha = 0.35
+        self.markup = 1
+        self.epsilon = 3
         self.start = start
         self.end = end
         self.country = country
@@ -52,9 +55,11 @@ class MisallocationAnalysis():
         self.win_df = self._win_df()
         self.sector_weights = self._calculate_sector_weights()
         self.time_invariant_weights = self._calculate_sector_weights(True)
-        self.dispt, self.disp = self._calculate_dispersion()
+        self._calculate_factor_products()
+        self.dispt, self.disp = self._calculate_dispersion_full_permanent(self.win_df)
         self.dispt_sector = self._dispersion_per_sector()
-        self.tfpdf = self._estimate_productivity()
+        self._estimate_productivity()
+        self.tfpdf = self._get_productivity_measures_full_permanent()
         self.cap_moments = self._capital_moments()
         self.estimate_all_moments()
 
@@ -127,11 +132,17 @@ class MisallocationAnalysis():
         #add real interest rate
         df = df.merge(self.realrate.df[['year', 'realinterestrate']], on='year', how='left')
 
+        #mark permanent firms if longer than 5 year in data
+        firm_year_count = df.groupby('FirmName')['year'].nunique()
+        span = round((self.end - self.start) * 0.75)
+        firms_5yr = firm_year_count[firm_year_count >= span].index
+        df['permanent'] = df['FirmName'].isin(firms_5yr)
+
         return df
 
     def _win_df(self) -> pd.DataFrame:
         df = self.df.copy()
-        vars = ['k', 'w', 'nvad', 'revenue', 'materials', 'debt', 'netfirmvalue', 'wagebill', 'a', 'b']
+        vars = ['k', 'w','l', 'y', 'nvad', 'revenue', 'materials', 'debt', 'netfirmvalue', 'wagebill', 'a', 'b']
         for var in vars:
             df[var] = winsorise(df[var])
 
@@ -154,11 +165,12 @@ class MisallocationAnalysis():
         return grouped.round
     
     def _calculate_sector_weights(self, time_invariant = False):
+        df = self.df[['sector', 'year', 'nvad']]
         # total VA per sector per year
-        vast = self.df.groupby(['sector', 'year'])['nvad'].sum().reset_index()
+        vast = df.groupby(['sector', 'year'])['nvad'].sum().reset_index()
 
         # total VA across all sectors, per year
-        vat = self.df.groupby('year')['nvad'].sum().reset_index().rename(columns={'nvad': 'nvadt'})
+        vat = df.groupby('year')['nvad'].sum().reset_index().rename(columns={'nvad': 'nvadt'})
 
         # merge total onto sector-level data
         vast = pd.merge(vast, vat, how='left', on='year')
@@ -185,9 +197,12 @@ class MisallocationAnalysis():
 
         return vast[['sector', 'year', 'sectorweight']]
 
-    def compare_df_eurostats(self) -> pd.DataFrame:
+    def compare_df_eurostats(self, permanent = False) -> pd.DataFrame:
+        df = self.df.copy()
+        if permanent:
+            df = df[df['permanent'] == True]
         #get infos of companies per year
-        counts = self.df.groupby('year').agg({
+        counts = df.groupby('year').agg({
             'FirmName': 'count', 'revenue': 'sum', 'wagebill': 'sum', 'materials': 'sum', 'nEmployees': 'sum'}).reset_index()
         counts['year'] = counts['year'].astype(str)
 
@@ -202,14 +217,14 @@ class MisallocationAnalysis():
         counts['Year'] = counts['year']
 
         return counts[['Year', 'Turnover','Wages', 'Value Added', 'Firms', 'Employees']].round(2)
-    
-    def _calculate_dispersion(self, df:pd.DataFrame=None):
-        alpha = 0.35
-        markup = 1
 
-        if df is None:
-            df = self.win_df
+    def _calculate_factor_products(self, alpha = None, markup=None):
+        if not alpha:
+            alpha= self.alpha
+        if not markup:
+            markup = self.markup
 
+        df = self.win_df
         # see gopinath p. 1926
         #calculate mrpk
         df['MRPK'] = (alpha/markup) * (df['nvad']/ df['k'])
@@ -218,12 +233,12 @@ class MisallocationAnalysis():
         #calculate firms total factor productivity
         df['TFPR'] = df['revenue'] / ( (df['k']** alpha) * (df['l']**(1-alpha)) )
 
-
         #calcualte dispersion from log MRPK and MRPL
         df['log_MRPK'] = np.log(df['MRPK'])
         df['log_MRPL'] = np.log(df['MRPL'])
         df['log_TFPR'] = np.log(df['TFPR'])
 
+    def _calculate_dispersion(self, df:pd.DataFrame) -> pd.DataFrame:
         #group by sector, year and take std
         disp = df.groupby(['sector', 'year']).agg(
                             disp_MRPK=('log_MRPK', 'std'),
@@ -239,6 +254,19 @@ class MisallocationAnalysis():
         dispt = disp.groupby('year').agg({'w_disp_MRPK': 'sum', 'w_disp_MRPL': 'sum', 'w_disp_TFPR': 'sum'})
         dispt = dispt.sort_index(ascending=True)
         
+        return dispt, disp
+
+    def _calculate_dispersion_full_permanent(self, df:pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+        dispt_full, disp_full = self._calculate_dispersion(self.win_df)
+        dispt_full['sample'] = 'full'
+        disp_full['sample'] = 'full'
+        dispt_per, disp_per = self._calculate_dispersion(self.win_df[self.win_df['permanent']==True])
+        dispt_per['sample'] = 'permanent'
+        disp_per['sample'] = 'permanent'
+
+        dispt = pd.concat([dispt_full, dispt_per])
+        disp = pd.concat([disp_full, disp_per])
+
         return dispt, disp
     
     def _estimate_disp_large_firms(self, top:float = 0.05):
@@ -266,8 +294,9 @@ class MisallocationAnalysis():
         
         return dispt
 
-    def _dispersion_per_sector(self):
+    def _dispersion_per_sector(self, sample: Literal['full', 'permanent'] = 'permanent'):
         df = self.disp.copy()
+        df = df[df['sample'] == 'permanent']
         df['sector'] = df['sector'].str[:2]
         grouped = df.groupby(['sector', 'year'])['w_disp_MRPK'].sum().reset_index().sort_values(['sector', 'year'],ascending=True)
 
@@ -290,8 +319,9 @@ class MisallocationAnalysis():
 
         return sector_variation
     
-    def plot_top_dispersion_sector(self, n:int=5):
+    def plot_top_dispersion_sector(self, n:int=5, sample: Literal['full', 'permanent'] = 'permanent'):
         df = self.disp.copy()
+        df = df[df['sample'] == sample]
         df['sector'] = df['sector'].str[:2]
         grouped = df.groupby(['sector', 'year'])['w_disp_MRPK'].sum().reset_index().sort_values(['sector', 'year'],ascending=True)
 
@@ -299,7 +329,7 @@ class MisallocationAnalysis():
             lambda x: x / x.iloc[0]
         )
 
-        top = self.dispt_sector['sector'][:n].to_list()
+        top = self._dispersion_per_sector(sample)['sector'][:n].to_list()
         grouped = grouped[grouped['sector'].isin(top)]
 
         names = get_sector_description()
@@ -315,10 +345,11 @@ class MisallocationAnalysis():
         return fig
 
 
-    def plot_main_sectors_dispersion(self, n:int=5):
+    def plot_main_sectors_dispersion(self, n:int=5, sample: Literal['full', 'permanent'] = 'permanent'):
         if self.selected_sector != 'X':
             raise Exception('For this plot you need to select sector = X when initializing misallocation analysis.')
         df = self.disp.copy()
+        df = df[df['sample'] == sample]
         sector_code_lookup = build_code_lookup(NACE_REV_2_SECTORS)
         df['main_sector'] = df['sector'].str[:2].astype(int).map(sector_code_lookup)
         grouped = df.groupby(['main_sector', 'year'])['w_disp_MRPK'].sum().reset_index().sort_values(['main_sector', 'year'],ascending=True)
@@ -338,18 +369,25 @@ class MisallocationAnalysis():
 
         return fig
 
-    def plot_dispersion(self, variables: Literal['MRPK', 'MRPL', 'both'] = 'MRPK', figsize=(8, 6), show=True):
-        plotdf = self.dispt.copy()
+    def plot_dispersion(self, variables: Literal['MRPK', 'MRPL', 'both'] = 'MRPK', figsize=(8, 6),show=True):
+        df = self.dispt.copy()
+        plotdf = df[df['sample'] == 'full'].drop(columns=['sample'])
         plotdf = plotdf / plotdf.iloc[0] -1
         plotdf = plotdf.reset_index()
+
+        plotdf_per = df[df['sample'] == 'permanent'].drop(columns=['sample'])
+        plotdf_per = plotdf_per / plotdf_per.iloc[0] -1
+        plotdf_per = plotdf_per.reset_index()
 
         # create plot
         fig, ax1 = plt.subplots(figsize=figsize)
 
         if variables in ['MRPK', 'both']:
-            ax1.plot(plotdf["year"], plotdf["w_disp_MRPK"], label="MRPK", color="#1f77b4", linewidth=2)
+            ax1.plot(plotdf["year"], plotdf["w_disp_MRPK"], label="MRPK Full Sample", color="#1f77b4", linewidth=2)
+            ax1.plot(plotdf_per["year"], plotdf_per["w_disp_MRPK"], label="MRPK Permanent Sample", color="#1f77b4", linestyle='--' , linewidth=2)
         if variables in ['MRPL', 'both']:
             ax1.plot(plotdf["year"], plotdf["w_disp_MRPL"], label="MRPL", color="#d62728", linewidth=2)
+            ax1.plot(plotdf_per["year"], plotdf_per["w_disp_MRPL"], label="MRPL Permanent Sample", color="#d62728", linestyle='--' , linewidth=2)
 
         # dynamic title based on which variable(s) are plotted
         title_map = {
@@ -370,13 +408,19 @@ class MisallocationAnalysis():
         return fig
 
     def plot_dispersion_productivity(self, variables: Literal['MRPK', 'MRPL', 'both'] = 'MRPK', figsize=(6, 4)):
-        plotdf = self.tfpdf.copy()
+        df = self.tfpdf.copy()
+        plotdf = df[df['sample'] == 'full'].drop(columns=['sample'])
         plotdf = plotdf / plotdf.iloc[0] -1
         plotdf = plotdf.reset_index()
 
+        plotdf_per = df[df['sample'] == 'permanent'].drop(columns='sample')
+        plotdf_per = plotdf_per / plotdf_per.iloc[0] -1
+        plotdf_per = plotdf_per.reset_index()
+
         fig = self.plot_dispersion(variables=variables, figsize=figsize, show=False)
         ax = fig.axes[0]  # grab the first (or only) axes in the figure
-        ax.plot(plotdf["year"], plotdf["log_tfp"], label="TFP", color="green", linewidth=2)
+        ax.plot(plotdf["year"], plotdf["log_tfp"], label="TFP Full Sample", color="green", linewidth=2)
+        ax.plot(plotdf_per["year"], plotdf_per["log_tfp"], label="TFP Permanent Sample", color="green", linestyle='--', linewidth=2)
         ax.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
         ax.legend()
         current_title = ax.get_title()
@@ -449,8 +493,8 @@ class MisallocationAnalysis():
 
     def _estimate_productivity(self):
         #calculate firm productivity z
-        EPSILON = 3
-        alpha = 0.35
+        EPSILON = self.epsilon
+        alpha = self.alpha
 
         #calculate sectorrevenue and merge to df
         sectorrevenue = self.win_df.groupby(['year', 'sector']).agg(nvad_s = ('nvad', 'sum')).reset_index()
@@ -465,9 +509,12 @@ class MisallocationAnalysis():
         )
         self.win_df['Z_pow'] = self.win_df['Z'] ** (EPSILON - 1)
 
+    def _get_productivity_measures(self, df:pd.DataFrame) -> pd.DataFrame:
+        EPSILON = self.epsilon
+        alpha = self.alpha
     
         # df groupby sector and year
-        sdf = self.win_df.groupby(['year', 'sector'])
+        sdf = df.groupby(['year', 'sector'])
 
         # calculate log tfpe and tfp per year and sector by the formulas above
         log_tfpe_st = ((1/(EPSILON-1)) 
@@ -490,6 +537,16 @@ class MisallocationAnalysis():
         tfp_df['log_tfpg'] = tfp_df['log_tfp'].iloc[0] + np.log(1.01) * np.arange(len(tfp_df))
 
         return tfp_df
+
+    def _get_productivity_measures_full_permanent(self) -> pd.DataFrame:
+        tfp_full = self._get_productivity_measures(self.win_df)
+        tfp_full['sample'] = 'full'
+        tfp_per = self._get_productivity_measures(self.win_df[self.win_df['permanent'] == True])
+        tfp_per['sample'] = 'permanent'
+
+        tfp = pd.concat([tfp_full, tfp_per])
+
+        return tfp
         
 
     def plot_productivity(self, figsize = (8,6)):
@@ -561,6 +618,7 @@ class MisallocationAnalysis():
     
     def _capital_moments(self):
         cap = self.win_df.copy()
+        cap = cap[cap['permanent'] == True]
 
         cap['log_k'] = np.log(cap['k'])
         cap['log_Z'] = np.log(cap['Z'])
@@ -594,6 +652,7 @@ class MisallocationAnalysis():
     def plot_capital_wedges(self, figsize = (10,4)):
         DELTA = 0.1
         df = self.win_df.copy()
+        df = df[df['permanent'] == True]
         df['log_tau_k'] = np.log(df['w']) + df['log_MRPK'] - np.log(df['realinterestrate'] + DELTA) - df['log_MRPL']
 
         # ── Assign groups: bottom 50% vs top 10% ────────────────────────
@@ -640,12 +699,10 @@ class MisallocationAnalysis():
 
         return fig
     
-    def estimate_distributional_moments(self):
+    def estimate_distributional_moments(self, df):
         vars = ['Z_pow', 'k', 'l']
-        df = self.win_df.copy()[['sector', 'year'] + vars]
+        df = df[['sector', 'year'] + vars]
         df[vars] = np.log(df[vars])
-        for var in vars:
-            df[var] = winsorise(df[var])
         df = df.groupby('sector')[vars].agg('std').reset_index()
         df = pd.merge(df, self.time_invariant_weights, on='sector', how='left')
         for var in vars:
@@ -653,25 +710,18 @@ class MisallocationAnalysis():
         distmoments = df[vars].sum().round(2)
         distmoments.index = [f'Std.dev.(log {i})' for i in vars]
 
-        def top20_share(group, cols):
-            result = {}
-            for col in cols:
-                threshold = group[col].quantile(0.80)
-                top20_sum = group.loc[group[col] >= threshold, col].sum()
-                result[col] = top20_sum / group[col].sum()
-            return pd.Series(result)
-
         cols = ['l', 'k']
-        result = self.win_df.copy().groupby('year').apply(lambda g: top20_share(g, cols))[cols].mean().round(2)
+        rdf = self.win_df.copy()
+        rdf = rdf[rdf['permanent'] == True]
+        result = rdf.groupby('year').apply(lambda g: top20_share(g, cols))[cols].mean().round(2)
         result.index = [f'Top 20% Share of {var}' for var in cols]
 
         self.distributional_moments = pd.concat([distmoments,result], axis=0)
 
-    def estimate_within_firm_moments(self):
-        self.within_firm_moments = WithinFirmMoments.WithinFirmMoments(self.win_df)
+    def estimate_within_firm_moments(self, df):
+        self.within_firm_moments = WithinFirmMoments.WithinFirmMoments(df)
 
-    def estimate_cross_sectional_moments(self):
-        df = self.win_df.copy()
+    def estimate_cross_sectional_moments(self, df):
 
         #calculate borrower share
         borrower_share = (df['b'] > 0).mean()
@@ -698,9 +748,10 @@ class MisallocationAnalysis():
         self.cross_sectional_moments = results
 
     def estimate_all_moments(self):
-        self.estimate_distributional_moments()
-        self.estimate_within_firm_moments()
-        self.estimate_cross_sectional_moments()
+        df = self.win_df[self.win_df['permanent'] == True]
+        self.estimate_distributional_moments(df)
+        self.estimate_within_firm_moments(df)
+        self.estimate_cross_sectional_moments(df)
 
         all = pd.concat([self.distributional_moments,
                         self.within_firm_moments.coefs['parameter'],
@@ -838,8 +889,6 @@ class MisallocationAnalysis():
     
     def _recalculate_correct_dispersion(self):
         df = self.win_df.copy()
-        for var in ['log_MRPK', 'log_MRPL', 'log_TFPR']:
-            df[var] = winsorise(df[var])
 
         #group by sector, year and take std
         disp = df.groupby(['sector', 'year']).agg(
@@ -989,18 +1038,24 @@ class MisallocationAnalysis():
 
         return fig
 
-    def overview_statistics(self):
+    def overview_statistics(self, permanent = False):
+        df = self.df.copy()
+        if permanent:
+            df = df[df['permanent'] == True]
         period = f"{self.start} - {self.end}"
-        avg_firmcount = self.df.groupby('year')['FirmName'].count().mean()
-        avg_revenue_coverage = self.compare_df_eurostats()['Turnover'].mean() 
-        top20share = self.distributional_moments.loc['Top 20% Share of k']
+        avg_firmcount = df.groupby('year')['FirmName'].count().mean()
+        avg_revenue_coverage = self.compare_df_eurostats(permanent=permanent)['Turnover'].mean() 
+        top20share = df.groupby('year').apply(lambda g: top20_share(g, ['k']))['k'].mean()
         sector = NACE_REV_2_SECTORS.get(self.selected_sector)['description']
 
         return pd.DataFrame([{'Country': self.country, 'Period': period, 'Sector': sector, 'Avg. n. Firms': avg_firmcount, 'Avg. Revenue Covered': avg_revenue_coverage, 'Top 20% Share of Capital': top20share}]).round(2)
 
-    def descriptive_statistics(self):
+    def descriptive_statistics(self, permanent = False):
         AMOUNTCOLS = ['assets','revenue','materials','wagebill','debt']
-        df = self.df[AMOUNTCOLS + ['nEmployees']].copy()
+        df = self.df.copy()
+        if permanent:
+            df = df[df['permanent'] == True]
+        df = df[AMOUNTCOLS + ['nEmployees']]
         for col in AMOUNTCOLS:
             df[col] = df[col] / 1000
         df = df.describe().round(2).T
@@ -1013,10 +1068,17 @@ class MisallocationAnalysis():
         return df.reset_index(names='Variables')
 
 
+def top20_share(group, cols):
+        result = {}
+        for col in cols:
+            threshold = group[col].quantile(0.80)
+            top20_sum = group.loc[group[col] >= threshold, col].sum()
+            result[col] = top20_sum / group[col].sum()
+        return pd.Series(result)
     
 
 #winsorize function to drop the stupid ones
-def winsorise(s, lower=0.01, upper=0.99):
+def winsorise(s, lower=0.001, upper=0.999):
     lo, hi = s.quantile([lower, upper])
     return s.clip(lo, hi)
 
