@@ -149,10 +149,16 @@ class MisallocationAnalysis():
         return df
 
     #calculate revenue distribution per firm size
-    def revenue_per_firm_size(self):
+    def revenue_per_firm_size(self, permanent:bool = False):
         df = self.df.copy()
+        if permanent:
+            df = df[df['permanent'] == True]
+            sample = 'permanent'
+        else:
+            sample = 'full'
+
         df['size_category'] = np.where(
-            df['nEmployees'] < 20, '0-19 employees', pd.NA
+            df['nEmployees'] < 20, '1-19 employees', pd.NA
         )
         df['size_category'] = np.where(
                     (df['nEmployees'] > 19) & (df['nEmployees'] < 250), '20-249 employees', df['size_category']
@@ -369,7 +375,7 @@ class MisallocationAnalysis():
 
         return fig
 
-    def plot_dispersion(self, variables: Literal['MRPK', 'MRPL', 'both'] = 'MRPK', figsize=(8, 6),show=True):
+    def plot_dispersion(self, variables: list[Literal['MRPK', 'MRPL', 'TFPR']] = []'MRPK', figsize=(8, 6),show=True):
         df = self.dispt.copy()
         plotdf = df[df['sample'] == 'full'].drop(columns=['sample'])
         plotdf = plotdf / plotdf.iloc[0] -1
@@ -549,26 +555,42 @@ class MisallocationAnalysis():
         return tfp
         
 
-    def plot_productivity(self, figsize = (8,6)):
-        plotdf = self.tfpdf.copy()
+    def plot_productivity(self, figsize = (6,4), sample: Literal['full', 'permanent'] = 'permanent'):
+        plotdf = self.tfpdf[self.tfpdf['sample'] == sample].copy().drop(columns=['sample'])
         plotdf = plotdf / plotdf.iloc[0] - 1
         plotdf = plotdf.reset_index()
 
         #create plot 
-        fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=figsize)
-
+        fig, ax1 = plt.subplots(figsize=figsize)
         ax1.plot(plotdf["year"], plotdf["log_tfp"], label="TFP", color="#1f77b4", linewidth=2)
-        ax1.plot(plotdf["year"], plotdf["log_tfpe"], label="TFPe", color="#d62728", linewidth=2)
+        ax1.plot(plotdf["year"], plotdf["log_tfpe"], label="TFPe", color="green", linewidth=2)
         ax1.plot(plotdf["year"], plotdf["log_tfpg"], label="1% growth", color="black", linewidth=2)
-        ax1.set_title(f"TFP vs. TFPe vs. 1% growth. {plotdf['year'][0]} = 0")
         ax1.set_ylabel("log TFP growth")
         ax1.legend()
 
-        ax2.plot(plotdf['year'],  plotdf["log_tfp"] -  plotdf["log_tfpe"], label='TFP vs TFPe')
-        ax2.set_title(f"{self.country} - Evolution of TFP Growth relative to Efficient Level Growth")
-        ax2.set_ylabel('log(TFP) - log(TFPe)')
-        ax2.legend()
+        plt.tight_layout()
+        plt.show()
 
+        return fig
+
+    def plot_efficient_tfp(self, figsize = (8,6)):
+        df = self.tfpdf
+
+        per = df[df['sample'] == 'permanent']
+        per = per.drop(columns=['sample'])
+        per = per / per.iloc[0] - 1
+        per = per.reset_index()
+
+        full = df[df['sample'] == 'full']
+        full = full.drop(columns=['sample'])
+        full = full / full.iloc[0] - 1
+        full = full.reset_index()
+
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.plot(per['year'],  per["log_tfp"] -  per["log_tfpe"], color="#1f77b4", linestyle='--', label='Permanent Sample')
+        ax.plot(full['year'],  full["log_tfp"] -  full["log_tfpe"], color="#1f77b4", label='Full Sample')
+        ax.set_ylabel('log(TFP) - log(TFPe)')
+        ax.legend()
 
         plt.tight_layout()
         plt.show()
@@ -617,33 +639,54 @@ class MisallocationAnalysis():
         return fig
     
     def _capital_moments(self):
-        cap = self.win_df.copy()
-        cap = cap[cap['permanent'] == True]
-
-        cap['log_k'] = np.log(cap['k'])
-        cap['log_Z'] = np.log(cap['Z'])
+        VARS = ['corr_Z_k', 'std_k', 'std_Z']
+        df = self.win_df[['year', 'k', 'Z', 'permanent', 'sector']].copy()
+        df['log_k'] = np.log(df['k'])
+        df['log_Z'] = np.log(df['Z'])
 
         # Cross-sectional correlation and std — pooled across all firms per year
-        cap_year = cap.groupby('year').apply(lambda g: pd.Series({
+        per = df[df['permanent'] == True]
+        per = per.groupby(['sector','year']).apply(lambda g: pd.Series({
             'corr_Z_k': g['log_k'].corr(g['log_Z']),
             'std_k':    g['log_k'].std(),
             'std_Z':    g['log_Z'].std(),
         })).reset_index()
+        per = per.merge(self.time_invariant_weights, on = 'sector', how='left')
+        for var in VARS:
+            per[var] = per[var] * per['sectorweight']
+        per = per.groupby('year').agg({'corr_Z_k': 'sum', 'std_k': 'sum', 'std_Z': 'sum'}).reset_index()
+        per['sample'] = 'permanent'
 
-        return cap_year
+
+        full = df.groupby(['sector','year']).apply(lambda g: pd.Series({
+            'corr_Z_k': g['log_k'].corr(g['log_Z']),
+            'std_k':    g['log_k'].std(),
+            'std_Z':    g['log_Z'].std(),
+        })).reset_index()
+        full = full.merge(self.time_invariant_weights, on = 'sector', how='left')
+        for var in VARS:
+            full[var] = full[var] * full['sectorweight']
+        full = full.groupby('year').agg({'corr_Z_k': 'sum', 'std_k': 'sum', 'std_Z': 'sum'}).reset_index()
+        full['sample'] = 'full'
+
+        return pd.concat([per,full])
 
     
     def plot_capital_tfp_moments(self, figsize = (10,4)):
-        
-        cap = self.cap_moments
+        df = self.cap_moments
+        per = df[df['sample'] == 'permanent']
+        full = df[df['sample'] == 'full']
 
         fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=figsize)
 
-        ax1.plot(cap['year'], cap['std_k'])
+        ax1.plot(full['year'], full['std_k'], label='Full Sample', color="#1f77b4")
+        ax1.plot(per['year'], per['std_k'], label='Permanent Sample', color="#1f77b4", linestyle='--')
         ax1.set_ylabel('Standard Deviation of log(k)')
-        ax2.plot(cap['year'], cap['corr_Z_k'])
+        ax2.plot(full['year'], full['corr_Z_k'],color ="#1f77b4", label='Full Sample')
+        ax2.plot(per['year'], per['corr_Z_k'], label='Permanent Sample',color ="#1f77b4", linestyle='--')
         ax2.set_ylabel('Correlation of log(k) with log(Z)')
 
+        plt.legend()
         plt.tight_layout()
         plt.show()
 

@@ -1,6 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 from MisallocationAnalysis import MisallocationAnalysis
+from typing import Literal
 
 COUNTRY_STYLES = {
     'Portugal': {'color': '#D6001C', 'marker': 'P', 'linestyle': ':'},   # flag red
@@ -17,7 +18,12 @@ class CompareCountries:
         self.start = start
         self.end = end
 
-    def compare(self):
+    def compare(self, sample: Literal['permanent', 'full'] = 'permanent'):
+        if sample == 'permanent':
+            permanent = True
+        elif sample == 'full':
+            permanent = False
+        else: permanent = None
 
         data = []
         for country in self.countries:
@@ -33,7 +39,7 @@ class CompareCountries:
                 end = country.end
 
             year_range = f"{start} - {end}"
-            orbis_turnover_mean = round(country.compare_df_eurostats()['Turnover'].mean() * 100, 2)
+            orbis_turnover_mean = round(country.compare_df_eurostats(permanent)['Turnover'].mean() * 100, 2)
             # realrate calculation
             rates = (
                 country.realrate.df
@@ -47,7 +53,8 @@ class CompareCountries:
             rr_net_change = (diffs.sum()).round(2)
 
             #mrpk calculation
-            mrpk = country.dispt.loc[start:end, 'w_disp_MRPK'].sort_index()
+            dispt = country.dispt[country.dispt['sample'] == sample]
+            mrpk = dispt.loc[start:end, 'w_disp_MRPK'].sort_index()
             pct_diffs = (mrpk.pct_change().dropna() * 100).round(2)
             mrpk_total_increase = pct_diffs[pct_diffs > 0].sum().round(2)
             mrpk_total_decrease = pct_diffs[pct_diffs < 0].sum().round(2)
@@ -66,7 +73,7 @@ class CompareCountries:
                                               'Change log MRPK %', 'Increase in MRPK %', 'Decrease in MRPK %', 
                                               'Coef log_a on capital growth', 'P-Value Coefficient'])
     
-    def plot_compare_mrpk(self, figsize=(12, 6)):
+    def plot_compare_mrpk(self, figsize=(12, 6), sample: Literal['permanent', 'full'] = 'permanent'):
         fig, ax = plt.subplots(figsize=figsize)
 
         for country in self.countries:
@@ -74,7 +81,8 @@ class CompareCountries:
             start = max(self.start, country.start) if self.start else country.start
             end = min(self.end, country.end) if self.end else country.end
 
-            series = country.dispt.loc[start:end, 'w_disp_MRPK'].dropna()
+            dispt = country.dispt[country.dispt['sample'] == sample]
+            series = dispt.loc[start:end, 'w_disp_MRPK'].dropna()
 
             # Normalize so start year == 0 (relative growth)
             base = series.iloc[0]
@@ -118,17 +126,17 @@ class CompareCountries:
 
         return df
 
-    def overview_statistics(self):
+    def overview_statistics(self, permanent=False):
         df = pd.DataFrame()
         for country in self.countries:
-            df = pd.concat([df, country.overview_statistics()], axis=0, ignore_index=True)
+            df = pd.concat([df, country.overview_statistics(permanent=permanent)], axis=0, ignore_index=True)
 
         return df
 
-    def descriptive_statistics(self):
+    def descriptive_statistics(self, permanent=False):
         df = pd.DataFrame()
         for country in self.countries:
-            stats = country.descriptive_statistics()
+            stats = country.descriptive_statistics(permanent=permanent)
             df = pd.concat([df, stats], axis=0, ignore_index=True)
 
         return df
