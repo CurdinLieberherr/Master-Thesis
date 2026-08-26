@@ -149,13 +149,12 @@ class MisallocationAnalysis():
         return df
 
     #calculate revenue distribution per firm size
-    def revenue_per_firm_size(self, permanent:bool = False):
+    def variable_per_firm_size(self, permanent:bool = False, year = None):
         df = self.df.copy()
+        if year:
+            df = df[df['year'] == year]
         if permanent:
             df = df[df['permanent'] == True]
-            sample = 'permanent'
-        else:
-            sample = 'full'
 
         df['size_category'] = np.where(
             df['nEmployees'] < 20, '1-19 employees', pd.NA
@@ -166,9 +165,10 @@ class MisallocationAnalysis():
         df['size_category'] = np.where(
                             df['nEmployees'] > 250, '250+ employees', df['size_category']
         )
-        grouped = df.groupby('size_category')['revenue'].sum()
-        grouped = grouped / df['revenue'].sum()
-        return grouped.round
+        grouped = df.groupby('size_category').agg({'revenue': 'sum', 'wagebill': 'sum'})
+        grouped['revenue'] = grouped['revenue'] / df['revenue'].sum()
+        grouped['wagebill'] = grouped['wagebill'] / df['wagebill'].sum()
+        return grouped
     
     def _calculate_sector_weights(self, time_invariant = False):
         df = self.df[['sector', 'year', 'nvad']]
@@ -375,7 +375,7 @@ class MisallocationAnalysis():
 
         return fig
 
-    def plot_dispersion(self, variables: list[Literal['MRPK', 'MRPL', 'TFPR']] = []'MRPK', figsize=(8, 6),show=True):
+    def plot_dispersion(self, variables: list[Literal['MRPK', 'MRPL', 'TFPR']] = ['MRPK'], figsize=(8, 6),show=True):
         df = self.dispt.copy()
         plotdf = df[df['sample'] == 'full'].drop(columns=['sample'])
         plotdf = plotdf / plotdf.iloc[0] -1
@@ -388,23 +388,25 @@ class MisallocationAnalysis():
         # create plot
         fig, ax1 = plt.subplots(figsize=figsize)
 
-        if variables in ['MRPK', 'both']:
+        if 'MRPK' in variables:
             ax1.plot(plotdf["year"], plotdf["w_disp_MRPK"], label="MRPK Full Sample", color="#1f77b4", linewidth=2)
             ax1.plot(plotdf_per["year"], plotdf_per["w_disp_MRPK"], label="MRPK Permanent Sample", color="#1f77b4", linestyle='--' , linewidth=2)
-        if variables in ['MRPL', 'both']:
-            ax1.plot(plotdf["year"], plotdf["w_disp_MRPL"], label="MRPL", color="#d62728", linewidth=2)
+        if 'MRPL' in variables:
+            ax1.plot(plotdf["year"], plotdf["w_disp_MRPL"], label="MRPL Full Sample", color="#d62728", linewidth=2)
             ax1.plot(plotdf_per["year"], plotdf_per["w_disp_MRPL"], label="MRPL Permanent Sample", color="#d62728", linestyle='--' , linewidth=2)
-
+        if 'TFPR' in variables:
+            ax1.plot(plotdf["year"], plotdf["w_disp_TFPR"], label="TFPR Full Sample", color="green", linewidth=2)
+            ax1.plot(plotdf_per["year"], plotdf_per["w_disp_TFPR"], label="TFPR Permanent Sample", color="green", linestyle='--' , linewidth=2)
+        
         # dynamic title based on which variable(s) are plotted
         title_map = {
             'MRPK': 'log MRPK Dispersion',
             'MRPL': 'log MRPL Dispersion',
             'both': 'log MRPK and log MRPL Dispersion'
         }
-        ax1.set_title(f"{self.country} - {title_map[variables]}")
-
+        base_year = plotdf['year'][0]
         ax1.set_xlabel("Year")
-        ax1.set_ylabel(f"Disp {title_map[variables]} (Growth, {plotdf['year'][0]} = 0)")
+        ax1.set_ylabel(f"% Change in Dispersion since {base_year}")
         ax1.legend()
 
         plt.tight_layout()
@@ -413,7 +415,7 @@ class MisallocationAnalysis():
 
         return fig
 
-    def plot_dispersion_productivity(self, variables: Literal['MRPK', 'MRPL', 'both'] = 'MRPK', figsize=(6, 4)):
+    def plot_dispersion_productivity(self, variables: list[Literal['MRPK', 'MRPL', 'both']] = ['MRPK'], figsize=(6, 4)):
         df = self.tfpdf.copy()
         plotdf = df[df['sample'] == 'full'].drop(columns=['sample'])
         plotdf = plotdf / plotdf.iloc[0] -1

@@ -73,7 +73,7 @@ class CompareCountries:
                                               'Change log MRPK %', 'Increase in MRPK %', 'Decrease in MRPK %', 
                                               'Coef log_a on capital growth', 'P-Value Coefficient'])
     
-    def plot_compare_mrpk(self, figsize=(12, 6), sample: Literal['permanent', 'full'] = 'permanent'):
+    def plot_compare_factor_products(self, figsize=(12, 6), variable: Literal['MRPK', 'MRPL', 'TFPR'] = 'MRPK', sample: Literal['permanent', 'full'] = 'full'):
         fig, ax = plt.subplots(figsize=figsize)
 
         for country in self.countries:
@@ -82,7 +82,7 @@ class CompareCountries:
             end = min(self.end, country.end) if self.end else country.end
 
             dispt = country.dispt[country.dispt['sample'] == sample]
-            series = dispt.loc[start:end, 'w_disp_MRPK'].dropna()
+            series = dispt.loc[start:end, f'w_disp_{variable}'].dropna()
 
             # Normalize so start year == 0 (relative growth)
             base = series.iloc[0]
@@ -102,7 +102,52 @@ class CompareCountries:
             ax.axvline(year, color='grey', linewidth=0.8, linestyle='--')
             ax.text(year, ax.get_ylim()[1], f'Period {i+1}', ha='center', va='bottom')
         ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
-        ax.set_title("Relative Growth of MRPK Dispersion (Start Year = 0%)")
+        sampletitle = 'Full Sample' if sample == 'full' else 'Permanent Sample'
+        ax.set_title(f"Relative Growth of {variable} Dispersion (Start Year = 0%) - {sampletitle}")
+        ax.set_xlabel("Year")
+        ax.set_ylabel("% Change from Start Year")
+
+        # dedupe legend in case the same country is plotted more than once (e.g. two periods)
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        ax.legend(by_label.values(), by_label.keys())
+        ax.margins(x=0.05, y=0.1)  
+        plt.tight_layout()
+        plt.show()
+
+        return fig
+
+    def plot_compare_sectoral_tfp(self,sample: Literal['permanent', 'full'], figsize=(10,6)):
+        fig, ax = plt.subplots(figsize=figsize)
+
+        for country in self.countries:
+            # Apply start/end filtering
+            start = max(self.start, country.start) if self.start else country.start
+            end = min(self.end, country.end) if self.end else country.end
+
+            tfpdf = country.tfpdf[country.tfpdf['sample'] == sample]
+            series = tfpdf.loc[start:end, 'log_tfp'].dropna()
+
+            # Normalize so start year == 0 (relative growth)
+            base = series.iloc[0]
+            relative = (series - base) / base * 100
+
+            color = COUNTRY_STYLES.get(country.country)['color']
+            linestyle = COUNTRY_STYLES.get(country.country)['linestyle']
+            ax.plot(relative.index, relative.values, label=country.country, color=color, linestyle=linestyle, linewidth=2)
+
+        #find start years
+        startyears = []
+        for country in self.countries:
+            if country.start not in startyears:
+                startyears.append(country.start)
+        #add vertical line
+        for i,year in enumerate(startyears):
+            ax.axvline(year, color='grey', linewidth=0.8, linestyle='--')
+            ax.text(year, ax.get_ylim()[1], f'Period {i+1}', ha='center', va='bottom')
+        ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
+        sampletitle = 'Full Sample' if sample == 'full' else 'Permanent Sample'
+        ax.set_title(f"Relative Growth of log TFP (Start Year = 0%) - {sampletitle}")
         ax.set_xlabel("Year")
         ax.set_ylabel("% Change from Start Year")
 
