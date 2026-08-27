@@ -807,17 +807,18 @@ class MisallocationAnalysis():
         return all
     
     def estimate_corrected_measures(self):
+        DELTA = 0.1
         df = self.win_df.copy()
         print(len(df))
         df = df.sort_values(['FirmName', 'year'])
 
         #create total cost for weigh
-        df['total_cost'] = df['k'] + df['w'] + df['materials']
+        df['total_cost'] = DELTA * df['k'] + df['l'] + df['materials']
         df['cost_weight'] = df['total_cost'] / df.groupby(['sector','year'])['total_cost'].transform('sum')
 
         # share weights - use empirical cost shares
-        df['s_K'] = df['k'] / df['total_cost']
-        df['s_L'] = df['w'] / df['total_cost']
+        df['s_K'] = DELTA * df['k'] / df['total_cost']
+        df['s_L'] = df['l'] / df['total_cost']
         df['s_X'] = df['materials'] / df['total_cost']
 
         # calculate cost weightes sector year average TFPR
@@ -826,8 +827,8 @@ class MisallocationAnalysis():
         df['TFPRdev'] = df['log_TFPR'] - df['meanlnTFPR']
 
         #create logs of inputs and lags
-        df['lnK'] = np.log(df['k'])
-        df['lnL'] = np.log(df['w'])
+        df['lnK'] = np.log(df['k'] * DELTA)
+        df['lnL'] = np.log(df['l'])
         df['lnX'] = np.log(df['materials'])
         df['lnR'] = np.log(df['revenue'])
 
@@ -876,7 +877,7 @@ class MisallocationAnalysis():
         for k, g in reg_data.groupby('decile'):
             X = sm.add_constant(g['dI dev'])
             y = g['dR dev']
-            model = sm.WLS(y, X, weights=g['cost_weight']).fit()
+            model = sm.WLS(y, X, weights=g['total_cost']).fit()
             beta_by_decile[k] = model.params['dI dev']
             se_by_decile[k] = model.bse['dI dev']
 
@@ -884,15 +885,13 @@ class MisallocationAnalysis():
 
         self.decile_betas = results
 
-        ## from betas calculate corrected values
-        df['decile_weight'] = df['total_cost'] / df.groupby(['decile','year'])['total_cost'].transform('sum')
-        df['decile_weighted_tfpr'] = df['TFPR'] * df['decile_weight']
-
         #group deciles to get total ln tfpr per decile
-        decile_means = df.groupby('decile').agg(
-            ln_tfpr_k=('decile_weighted_tfpr', 'sum')
-        ).reset_index()
-        decile_means['ln_tfpr_k'] = np.log(decile_means['ln_tfpr_k'])
+        decile_means = (
+            df.groupby('decile')
+            .apply(lambda g: np.average(g['log_TFPR'], weights=g['total_cost']))
+            .rename('ln_tfpr_k')
+            .reset_index()
+        )
         #merge with results to get beta per decile
         decile_means = decile_means.merge(results, on='decile', how='left')
         decile_means['lnbeta'] = np.log(decile_means['beta'])
