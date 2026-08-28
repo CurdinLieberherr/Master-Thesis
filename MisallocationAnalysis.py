@@ -397,13 +397,9 @@ class MisallocationAnalysis():
         if 'TFPR' in variables:
             ax1.plot(plotdf["year"], plotdf["w_disp_TFPR"], label="TFPR Full Sample", color="green", linewidth=2)
             ax1.plot(plotdf_per["year"], plotdf_per["w_disp_TFPR"], label="TFPR Permanent Sample", color="green", linestyle='--' , linewidth=2)
+
+        ax1.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
         
-        # dynamic title based on which variable(s) are plotted
-        title_map = {
-            'MRPK': 'log MRPK Dispersion',
-            'MRPL': 'log MRPL Dispersion',
-            'both': 'log MRPK and log MRPL Dispersion'
-        }
         base_year = plotdf['year'][0]
         ax1.set_xlabel("Year")
         ax1.set_ylabel(f"% Change in Dispersion since {base_year}")
@@ -567,6 +563,7 @@ class MisallocationAnalysis():
         ax1.plot(plotdf["year"], plotdf["log_tfp"], label="TFP", color="#1f77b4", linewidth=2)
         ax1.plot(plotdf["year"], plotdf["log_tfpe"], label="TFPe", color="green", linewidth=2)
         ax1.plot(plotdf["year"], plotdf["log_tfpg"], label="1% growth", color="black", linewidth=2)
+        ax1.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
         ax1.set_ylabel("log TFP growth")
         ax1.legend()
 
@@ -591,6 +588,7 @@ class MisallocationAnalysis():
         fig, ax = plt.subplots(figsize=figsize)
         ax.plot(per['year'],  per["log_tfp"] -  per["log_tfpe"], color="#1f77b4", linestyle='--', label='Permanent Sample')
         ax.plot(full['year'],  full["log_tfp"] -  full["log_tfpe"], color="#1f77b4", label='Full Sample')
+        ax.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
         ax.set_ylabel('log(TFP) - log(TFPe)')
         ax.legend()
 
