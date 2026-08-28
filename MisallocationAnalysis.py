@@ -805,10 +805,12 @@ class MisallocationAnalysis():
         self.all_moments = all
 
         return all
-    
+
+        
     def estimate_corrected_measures(self):
         DELTA = 0.1
         df = self.win_df.copy()
+        df = df[df['permanent'] == True]
         print(len(df))
         df = df.sort_values(['FirmName', 'year'])
 
@@ -907,26 +909,45 @@ class MisallocationAnalysis():
         df = df.merge(decile_means, on='decile', how='left')
         df['corrected MRPK'] = df['log_MRPK'] + df['lnbeta'] + df['epsilon']
         df['corrected MRPL'] = df['log_MRPL'] + df['lnbeta'] + df['epsilon']
+        df['corrected TFPR'] = df['log_TFPR'] + df['lnbeta'] + df['epsilon']
 
-        self.corrected_measures = df[['FirmName', 'year', 'corrected MRPK', 'corrected MRPL']]
+        self.corrected_measures = df[['FirmName', 'year', 'corrected MRPK', 'corrected MRPL', 'corrected TFPR']]
 
-    def plot_correct_measures(self, measure: Literal['MRPK', 'MRPL']):
+    def plot_correct_measures_dispersion(self, measure: Literal['MRPK', 'MRPL', 'TFPR']):
         df = self.win_df.merge(self.corrected_measures, on=['FirmName', 'year'], how='right')
 
         VARS = [f'log_{measure}',f'corrected {measure}']
-        plotdf = df[VARS + ['nvad',  'year']].copy()
-        plotdf['weight'] = plotdf['nvad'] / plotdf.groupby('year')['nvad'].transform('sum')
-
+        plotdf = df[VARS + ['nvad',  'year', 'sector']].copy()
+        plotdf = plotdf.groupby(['sector', 'year'])[VARS].std().reset_index()
+        plotdf = plotdf.merge(self.time_invariant_weights, on='sector', how='left')
         for var in VARS:
-            plotdf[var] = plotdf[var] * plotdf['weight']
-
+            plotdf[var] = plotdf[var] * plotdf['sectorweight']
         plotdf = plotdf.groupby('year')[VARS].sum().reset_index()
+        for var in VARS:
+            plotdf[var] = (plotdf[var] / plotdf.loc[0, var]) - 1
+
+        if measure == 'MRPL':
+            color = '#d62728'
+        elif measure == 'TFPR':
+            color = 'green'
+        else: 
+            color = '#1f77b4'
 
         fig,ax1 = plt.subplots(figsize=(6,4))
 
         for var in VARS:
-            ax1.plot(plotdf["year"], plotdf[var], label=var,  linewidth=2)
+            if 'corrected' in var:
+                linestyle = '--'
+                label = var.replace('corrected', 'Corrected')
+            else:
+                linestyle = '-'
+                label = var.replace('log_', 'Observed ')
+            ax1.plot(plotdf["year"], plotdf[var], color= color, label=label, linestyle = linestyle, linewidth=2)
 
+        ax1.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
+        base_year = plotdf['year'][0]
+        ax1.set_xlabel("Year")
+        ax1.set_ylabel(f"% Change in Dispersion since {base_year}")
         plt.legend()
         plt.show()
         return fig
@@ -959,16 +980,8 @@ class MisallocationAnalysis():
         self.win_df['log_MRPL'] = self.win_df['corrected MRPL']
         self.win_df['MRPK'] = np.exp(self.win_df['corrected MRPK'])
         self.win_df['MRPL'] = np.exp(self.win_df['corrected MRPL'])
-
-        alpha = 0.35
-        mu = 1
-
-        self.win_df['log_TFPR'] = (
-            np.log(mu)
-            + alpha * (self.win_df['log_MRPK'] - np.log(alpha))
-            + (1 - alpha) * (self.win_df['log_MRPL'] - np.log(1 - alpha))
-        )
-        self.win_df['TFPR'] = np.exp(self.win_df['log_TFPR'])
+        self.win_df['log_TFPR'] = self.win_df['corrected TFPR']
+        self.win_df['TFPR'] = np.exp(self.win_df['log_TFPR'])   
 
         self.dispt, self.disp = self._recalculate_correct_dispersion()
 
