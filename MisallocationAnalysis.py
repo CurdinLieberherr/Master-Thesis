@@ -1167,7 +1167,7 @@ class MisallocationAnalysis():
             X = sm.add_constant(dummies)
             y = gw['log_tau_k_dev']
 
-            model = sm.OLS(y, X).fit() 
+            model = sm.OLS(y, X).fit(cov_type='cluster', cov_kwds={'groups': gw['FirmName']} ) 
 
             coef_by_decile = {1: 0.0}  # reference decile
             se_by_decile = {1: 0.0}
