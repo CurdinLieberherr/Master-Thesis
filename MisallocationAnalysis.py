@@ -39,6 +39,7 @@ class MisallocationAnalysis():
     def __init__(self, country: str, start:int = 2015, end:int=2024, sector:NaceSection = "C"):
         self.alpha = 0.35
         self.markup = 1
+        self.delta = 0.1
         self.epsilon = 3
         self.start = start
         self.end = end
@@ -398,7 +399,7 @@ class MisallocationAnalysis():
             ax1.plot(plotdf["year"], plotdf["w_disp_TFPR"], label="TFPR Full Sample", color="green", linewidth=2)
             ax1.plot(plotdf_per["year"], plotdf_per["w_disp_TFPR"], label="TFPR Permanent Sample", color="green", linestyle='--' , linewidth=2)
 
-        ax1.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
+        ax1.grid(True, linestyle='--', alpha=0.5)
         
         base_year = plotdf['year'][0]
         ax1.set_xlabel("Year")
@@ -425,10 +426,7 @@ class MisallocationAnalysis():
         ax = fig.axes[0]  # grab the first (or only) axes in the figure
         ax.plot(plotdf["year"], plotdf["log_tfp"], label="TFP Full Sample", color="green", linewidth=2)
         ax.plot(plotdf_per["year"], plotdf_per["log_tfp"], label="TFP Permanent Sample", color="green", linestyle='--', linewidth=2)
-        ax.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
         ax.legend()
-        current_title = ax.get_title()
-        ax.set_title(f"{current_title} and log TFP Growth")
         ax.set_ylabel(f'Growth, {plotdf['year'][0]} = 0')
         plt.show()
 
@@ -563,7 +561,7 @@ class MisallocationAnalysis():
         ax1.plot(plotdf["year"], plotdf["log_tfp"], label="TFP", color="#1f77b4", linewidth=2)
         ax1.plot(plotdf["year"], plotdf["log_tfpe"], label="TFPe", color="green", linewidth=2)
         ax1.plot(plotdf["year"], plotdf["log_tfpg"], label="1% growth", color="black", linewidth=2)
-        ax1.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
+        ax1.grid(True, linestyle='--', alpha=0.5)
         ax1.set_ylabel("log TFP growth")
         ax1.legend()
 
@@ -588,7 +586,7 @@ class MisallocationAnalysis():
         fig, ax = plt.subplots(figsize=figsize)
         ax.plot(per['year'],  per["log_tfp"] -  per["log_tfpe"], color="#1f77b4", linestyle='--', label='Permanent Sample')
         ax.plot(full['year'],  full["log_tfp"] -  full["log_tfpe"], color="#1f77b4", label='Full Sample')
-        ax.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
+        ax.grid(True, linestyle='--', alpha=0.5)
         ax.set_ylabel('log(TFP) - log(TFPe)')
         ax.legend()
 
@@ -682,9 +680,11 @@ class MisallocationAnalysis():
         ax1.plot(full['year'], full['std_k'], label='Full Sample', color="#1f77b4")
         ax1.plot(per['year'], per['std_k'], label='Permanent Sample', color="#1f77b4", linestyle='--')
         ax1.set_ylabel('Standard Deviation of log(k)')
+        ax1.grid(True, linestyle='--', alpha=0.5)
         ax2.plot(full['year'], full['corr_Z_k'],color ="#1f77b4", label='Full Sample')
         ax2.plot(per['year'], per['corr_Z_k'], label='Permanent Sample',color ="#1f77b4", linestyle='--')
         ax2.set_ylabel('Correlation of log(k) with log(Z)')
+        ax2.grid(True, linestyle='--', alpha=0.5)
 
         plt.legend()
         plt.tight_layout()
@@ -942,7 +942,7 @@ class MisallocationAnalysis():
                 label = var.replace('log_', 'Observed ')
             ax1.plot(plotdf["year"], plotdf[var], color= color, label=label, linestyle = linestyle, linewidth=2)
 
-        ax1.axhline(y=0, color='black', linewidth=0.8, linestyle='--', dashes=(5, 10), alpha = 0.5)
+        ax1.grid(True, linestyle='--', alpha=0.5)
         base_year = plotdf['year'][0]
         ax1.set_xlabel("Year")
         ax1.set_ylabel(f"% Change in Dispersion since {base_year}")
@@ -1121,6 +1121,91 @@ class MisallocationAnalysis():
         other_cols = [c for c in df.columns if c not in additional]
         df = df[additional + other_cols]
         return df.reset_index(names='Variables')
+
+
+    def estimate_capital_wedges(self, size_groups = 10, period_length = 5) -> pd.DataFrame:
+
+        df = self.win_df
+        df = df[df['permanent'] == True]
+
+        # --- sector-year benchmark wage (consider weighting by employment rather than simple mean) ---
+        mean_wages = df.groupby(['sector', 'year']).agg(wst=('w', 'mean')).reset_index()
+        df = df.merge(mean_wages, on=['sector', 'year'], how='left')
+
+        # --- capital wedge (log) ---
+        df['log_tau_k'] = (
+            np.log(df['wst'])
+            + df['log_MRPK']
+            - np.log(df['realinterestrate'] + self.delta)
+            - df['log_MRPL']
+        )
+
+        # --- net worth deciles, per sector-year (avoids picking up sector-level size composition) ---
+        df['nw_decile'] = (
+            df.groupby(['sector', 'year'])['a']
+            .transform(lambda x: pd.qcut(x, size_groups, labels=False, duplicates='drop') + 1)
+        )
+
+        # --- demean tau_k by sector-year to strip out common sector-year shocks ---
+        df['log_tau_k_dev'] = df['log_tau_k'] - df.groupby(['sector', 'year'])['log_tau_k'].transform('mean')
+
+        # --- define 5-year rolling windows ---
+        def assign_window(year, start=df['year'].min(), width=period_length):
+            idx = (year - start) // width
+            return f"{start + idx*width}-{start + idx*width + width - 1}"
+
+        df['window'] = df['year'].apply(assign_window)
+
+        # --- run decile-dummy regression separately per window ---
+        window_results = {}
+
+        for w, gw in df.groupby('window'):
+            gw = gw.dropna(subset=['log_tau_k_dev', 'nw_decile'])
+
+            # decile dummies, decile 1 as reference (omitted) category
+            dummies = pd.get_dummies(gw['nw_decile'], prefix='decile', drop_first=True).astype(float)
+            X = sm.add_constant(dummies)
+            y = gw['log_tau_k_dev']
+
+            model = sm.OLS(y, X).fit() 
+
+            coef_by_decile = {1: 0.0}  # reference decile
+            se_by_decile = {1: 0.0}
+            for d in range(2, 11):
+                col = f'decile_{d}.0' if f'decile_{d}.0' in model.params.index else f'decile_{d}'
+                if col in model.params.index:
+                    coef_by_decile[d] = model.params[col]
+                    se_by_decile[d] = model.bse[col]
+
+            window_results[w] = pd.DataFrame({
+                'decile': list(coef_by_decile.keys()),
+                'tau_k_gap': list(coef_by_decile.values()),
+                'se': list(se_by_decile.values()),
+            }).sort_values('decile')
+
+        results_long = pd.concat(
+            [r.assign(window=w) for w, r in window_results.items()],
+            ignore_index=True
+        )
+
+        return results_long
+
+    def plot_capital_wedges_results(self, size_groups = 10, period_length = 5, figsize = (6,4)):
+        results_long = self.estimate_capital_wedges(size_groups, period_length)
+    
+        fig, ax = plt.subplots(figsize=figsize)
+
+        for w, g in results_long.groupby('window'):
+            plt.errorbar(g['decile'], g['tau_k_gap'], marker='o', label=w)
+
+        ax.grid(True, alpha=0.5, linestyle='--')
+        plt.xlabel('Net Worth Decile')
+        plt.ylabel(r'$\log \hat\tau^k$ gap (rel. to decile 1)')
+        plt.legend()
+        plt.show()
+
+        return fig
+
 
 
 def top20_share(group, cols):
