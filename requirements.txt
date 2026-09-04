@@ -1,0 +1,10 @@
+# Used Python: 3.12.13
+duckdb==1.5.5
+linearmodels==7.0
+matplotlib==3.11.1
+numpy==2.5.2
+pandas==3.0.5
+pycountry==26.2.16
+statsmodels==0.15.0
+ipykernel==7.3.0
+openpyxl==3.1.5
